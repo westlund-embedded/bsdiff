@@ -7,5 +7,5 @@ The standard version of bsdiff also uses bzip2 which is slow and consumes alot o
 
 The first version is at the moment only built and tested under Linux. The next step is to port this into NuttX RTOS which is a POSIX operating system much like Linux.
 
-This version of bspatch is not compatible with the standard BSDIFF40 bsdiff
+This version of bspatch is NOT compatible with the standard BSDIFF40 bsdiff
 
