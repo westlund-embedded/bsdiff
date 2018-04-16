@@ -25,7 +25,7 @@
  * POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include <bzlib.h>
+
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
@@ -36,7 +36,7 @@
 #include "tinf.h"
 
 #define MIN(x, y) (((x) < (y)) ? (x) : (y))
-#define RAM_SIZE	1024	// Actual RAM usage is RAM size x 3 (oldfile, newfile, patch)
+#define RAM_SIZE	8192	// Actual RAM usage is RAM size x 3 (oldfile, newfile, patch)
 
 static off_t offtin(uint8_t *buf) {
 	off_t y;
@@ -65,12 +65,29 @@ static off_t offtin(uint8_t *buf) {
 
 /* Reads compressed data until decompressed length */
 size_t uzRead(TINF_DATA *d, int fd, uint8_t *buffer, size_t length) {
-	uint8_t *tmp = (uint8_t)malloc(length);
+	int i, ret, rd_length, src_length, dst_length;
+	uint8_t *tmp = (uint8_t*)malloc(length);
+	if (rd_length = read(fd, tmp, length) < 0)
+		err(1, "reading src");
+
 	d->source = tmp;
 	d->dest = buffer;
-	d->destSize = length;
+	d->destSize = 1;
 
-	
+	for (i = 0; i < length; i++) {
+		ret = uzlib_uncompress_chksum(d);
+		if (ret != TINF_OK) break;
+		// TODO: implement protection against src_length > rd_length
+	}
+
+	src_length = d->source - tmp;
+	dst_length = d->dest - buffer;
+	free(tmp);
+
+	/* adjust file pointer */
+	lseek(fd, src_length - rd_length, SEEK_CUR);
+
+	return dst_length;			
 }
 
 /* Opens and validates compressed data */
@@ -145,16 +162,25 @@ int main(int argc, char * argv[]) {
 	if ((uzctrllen < 0) || (uzdatalen < 0) || (newsize < 0))
 		errx(1, "Corrupt patch\n");
 
-	/* Close patch file and re-open it at the right places */
+	/* Close patch file and re-open it with uzlib at the right places */
 	if (close(fd_patch))
-		err(1, "fclose(%s)", argv[3]);
+		err(1, "close(%s)", argv[3]);
 
 	if (((uzfctrl = open(argv[3], O_RDONLY)) < 0) 
-			|| (lseek(uzfctrl, 36, SEEK_SET) != 0))
+			|| (lseek(uzfctrl, 36, SEEK_SET) != 0)
+			|| (uzReadOpen(&tctrl, uzfctrl) != TINF_OK))
 		err(1, "%s", argv[3]);
 
-	uzReadOpen(&tctrl, uzfctrl);
+	if (((uzfdata = open(argv[3], O_RDONLY)) < 0) 
+			|| (lseek(uzfctrl, 36 + uzctrllen, SEEK_SET) != 0)
+			|| (uzReadOpen(&tdata, uzfdata) != TINF_OK))
+		err(1, "%s", argv[3]);
 
+	if (((uzfextra = open(argv[3], O_RDONLY)) < 0) 
+			|| (lseek(uzfextra, 36 + uzctrllen + uzdatalen, SEEK_SET) != 0)
+			|| (uzReadOpen(&textra, uzfextra) != TINF_OK))
+		err(1, "%s", argv[3]);
+	
 	if (((fd_old = open(argv[1], O_RDONLY)) < 0)
 			|| ((oldsize = lseek(fd_old, 0, SEEK_END)) == -1)
 			|| (lseek(fd_old, 0, SEEK_SET) != 0))
@@ -169,7 +195,7 @@ int main(int argc, char * argv[]) {
 	while (newpos < newsize) {
 
 		/* Read control data */
-		if (uzRead(fd_patch, uzctlptr, buf, 24) != 24)
+		if (uzRead(&tctrl, uzfctrl, buf, 24) != 24)
 			errx(1, "Corrupt patch\n");
 		for (i = 0; i < 3; i++)	{
 			ctrl[i] = offtin(buf);
@@ -187,9 +213,8 @@ int main(int argc, char * argv[]) {
 			read(fd_old, old, max_length);
 
 			/* Read diff string */
-			lenread = BZ2_bzRead(&dbz2err, dpfbz2, new, max_length);
-			if ((lenread < max_length)
-					|| ((dbz2err != BZ_OK) && (dbz2err != BZ_STREAM_END)))
+			lenread = uzRead(&tdata, uzfdata, new, max_length);
+			if (lenread < max_length)
 				errx(1, "Corrupt patch\n");
 
 			/* Add old data to diff string */
@@ -217,9 +242,8 @@ int main(int argc, char * argv[]) {
 			max_length = MIN(ctrl[1], RAM_SIZE);
 
 			/* Read extra string */
-			lenread = BZ2_bzRead(&ebz2err, epfbz2, new, max_length);
-			if ((lenread < max_length)
-					|| ((ebz2err != BZ_OK) && (ebz2err != BZ_STREAM_END)))
+			lenread = uzRead(&textra, uzfextra, new, max_length);
+			if (lenread < max_length)
 				errx(1, "Corrupt patch\n");
 
 			/* Adjust pointers */
@@ -242,12 +266,8 @@ int main(int argc, char * argv[]) {
 	close(fd_new);
 	close(fd_old);
 
-	/* Clean up the bzip2 reads */
-	BZ2_bzReadClose(&cbz2err, cpfbz2);
-	BZ2_bzReadClose(&dbz2err, dpfbz2);
-	BZ2_bzReadClose(&ebz2err, epfbz2);
-	if (fclose(cpf) || fclose(dpf) || fclose(epf))
-		err(1, "fclose(%s)", argv[3]);
+	if (close(uzfctrl) || close(uzfdata) || close(uzfextra))
+		err(1, "close(%s)", argv[3]);
 
 	return 0;
 }

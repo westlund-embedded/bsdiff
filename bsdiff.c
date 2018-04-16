@@ -29,6 +29,7 @@
 
 #include <bzlib.h>
 #include "tinf.h"
+#include "defl_static.h"
 #include <err.h>
 #include <fcntl.h>
 #include <stdio.h>
