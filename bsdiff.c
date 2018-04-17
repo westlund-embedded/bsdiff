@@ -27,7 +27,6 @@
 
 #include <sys/types.h>
 
-#include <bzlib.h>
 #include "tinf.h"
 #include "defl_static.h"
 #include <err.h>
@@ -196,6 +195,21 @@ static void offtout(off_t x,uint8_t *buf)
 	if(x<0) buf[7]|=0x80;
 }
 
+void uzWriteOpen(TINF_DATA  *d, int fd)
+{
+
+}
+
+void uzWriteClose(int fd)
+{
+
+}
+
+size_t uzWrite(TINF_DATA *d, int fd, uint8_t *buffer, size_t length)
+{
+	
+}
+
 int main(int argc,char *argv[])
 {
 	int fd;
@@ -213,9 +227,7 @@ int main(int argc,char *argv[])
 	uint8_t buf[8];
 	uint8_t header[32];
 	FILE * pf;
-	BZFILE * pfbz2;
-	int bz2err;
-
+	
 	if(argc!=4) errx(1,"usage: %s oldfile newfile patchfile\n",argv[0]);
 
 	/* Allocate oldsize+1 bytes instead of oldsize bytes to ensure
@@ -253,20 +265,20 @@ int main(int argc,char *argv[])
 		err(1, "%s", argv[3]);
 
 	/* Header is
-		0	8	 "BSDIFF40"
-		8	8	length of bzip2ed ctrl block
-		16	8	length of bzip2ed diff block
-		24	8	length of new file */
+		0	12	 "JWE/BSDIFF40"
+		12	8	length of bzip2ed ctrl block
+		20	8	length of bzip2ed diff block
+		28	8	length of new file */
 	/* File is
-		0	32	Header
-		32	??	Bzip2ed ctrl block
-		??	??	Bzip2ed diff block
-		??	??	Bzip2ed extra block */
-	memcpy(header,"BSDIFF40",8);
-	offtout(0, header + 8);
-	offtout(0, header + 16);
-	offtout(newsize, header + 24);
-	if (fwrite(header, 32, 1, pf) != 1)
+		0	36	Header
+		36	??	uzlib ctrl block
+		??	??	uzlib diff block
+		??	??	uzlib extra block */
+	memcpy(header,"JWE/BSDIFF40",12);
+	offtout(0, header + 12);
+	offtout(0, header + 20);
+	offtout(newsize, header + 28);
+	if (fwrite(header, 36, 1, pf) != 1)
 		err(1, "fwrite(%s)", argv[3]);
 
 	/* Compute the differences, writing ctrl as we go */
