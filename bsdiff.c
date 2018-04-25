@@ -183,7 +183,7 @@ static void offtout(off_t x,uint8_t *buf)
 
 	if(x<0) y=-x; else y=x;
 
-		buf[0]=y%256;y-=buf[0];
+			buf[0]=y%256;y-=buf[0];
 	y=y/256;buf[1]=y%256;y-=buf[1];
 	y=y/256;buf[2]=y%256;y-=buf[2];
 	y=y/256;buf[3]=y%256;y-=buf[3];
@@ -195,19 +195,34 @@ static void offtout(off_t x,uint8_t *buf)
 	if(x<0) buf[7]|=0x80;
 }
 
-void uzWriteOpen(TINF_DATA  *d, int fd)
+void uzWriteOpen(FILE *sf, FILE *df)
 {
+	putc(0x1f, df);
+    putc(0x8b, df);
+    putc(0x08, df);
+    putc(0x00, df); // FLG
+    int mtime = 0;
+    fwrite(&mtime, sizeof(mtime), 1, df);
+    putc(0x04, df); // XFL
+    putc(0x03, df); // OS
 
+	sf = fopen("tmp", "rw");
 }
 
-void uzWriteClose(int fd)
+void uzWriteClose(FILE *sf, FILE *df, int sf_len)
 {
-
+	char *source = (char*)malloc(sf_len);
+	fread(source, 1, sf_len, sf);
+    unsigned crc = ~uzlib_crc32(source, sf_len, ~0);
+    fwrite(&crc, sizeof(crc), 1, df);
+	free(source);
+	fclose(sf);
 }
 
-size_t uzWrite(TINF_DATA *d, int fd, uint8_t *buffer, size_t length)
+size_t uzWrite(FILE *sf, FILE *df, uint8_t *buffer, size_t length)
 {
-	
+	fwrite(buffer, 1, length, sf);
+	// TODO: compress data and add write to destination file
 }
 
 int main(int argc,char *argv[])
@@ -225,7 +240,7 @@ int main(int argc,char *argv[])
 	off_t dblen,eblen;
 	uint8_t *db,*eb;
 	uint8_t buf[8];
-	uint8_t header[32];
+	uint8_t header[36];
 	FILE * pf;
 	
 	if(argc!=4) errx(1,"usage: %s oldfile newfile patchfile\n",argv[0]);
@@ -282,8 +297,8 @@ int main(int argc,char *argv[])
 		err(1, "fwrite(%s)", argv[3]);
 
 	/* Compute the differences, writing ctrl as we go */
-	if ((pfbz2 = BZ2_bzWriteOpen(&bz2err, pf, 9, 0, 0)) == NULL)
-		errx(1, "BZ2_bzWriteOpen, bz2err = %d", bz2err);
+	uzWriteOpen(pf);
+		
 	scan=0;len=0;
 	lastscan=0;lastpos=0;lastoffset=0;
 	while(scan<newsize) {
@@ -347,33 +362,26 @@ int main(int argc,char *argv[])
 			eblen+=(scan-lenb)-(lastscan+lenf);
 
 			offtout(lenf,buf);
-			BZ2_bzWrite(&bz2err, pfbz2, buf, 8);
-			if (bz2err != BZ_OK)
-				errx(1, "BZ2_bzWrite, bz2err = %d", bz2err);
+			uzWrite(pf, buf, 8);
 
 			offtout((scan-lenb)-(lastscan+lenf),buf);
-			BZ2_bzWrite(&bz2err, pfbz2, buf, 8);
-			if (bz2err != BZ_OK)
-				errx(1, "BZ2_bzWrite, bz2err = %d", bz2err);
+			uzWrite(pf, buf, 8);
 
 			offtout((pos-lenb)-(lastpos+lenf),buf);
-			BZ2_bzWrite(&bz2err, pfbz2, buf, 8);
-			if (bz2err != BZ_OK)
-				errx(1, "BZ2_bzWrite, bz2err = %d", bz2err);
+			uzWrite(pf, buf, 8);
 
 			lastscan=scan-lenb;
 			lastpos=pos-lenb;
 			lastoffset=pos-scan;
 		};
 	};
-	BZ2_bzWriteClose(&bz2err, pfbz2, 0, NULL, NULL);
-	if (bz2err != BZ_OK)
-		errx(1, "BZ2_bzWriteClose, bz2err = %d", bz2err);
+
+	uzWriteClose(pf);
 
 	/* Compute size of compressed ctrl data */
 	if ((len = ftello(pf)) == -1)
 		err(1, "ftello");
-	offtout(len-32, header + 8);
+	offtout(len-36, header + 8);
 
 	/* Write compressed diff data */
 	if ((pfbz2 = BZ2_bzWriteOpen(&bz2err, pf, 9, 0, 0)) == NULL)
