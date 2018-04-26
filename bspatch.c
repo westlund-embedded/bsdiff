@@ -66,18 +66,24 @@ static off_t offtin(uint8_t *buf) {
 /* Reads compressed data until decompressed length */
 size_t uzRead(TINF_DATA *d, int fd, uint8_t *buffer, size_t length) {
 	int i, ret, rd_length, src_length, dst_length;
-	uint8_t *tmp = (uint8_t*)malloc(length);
-	if (rd_length = read(fd, tmp, length) < 0)
+	uint8_t *tmp = (uint8_t*)malloc(2048);
+	if (rd_length = read(fd, tmp, 2048) < 0)
 		err(1, "reading src");
 
 	d->source = tmp;
 	d->dest = buffer;
 	d->destSize = 1;
+	d->checksum_type = TINF_CHKSUM_NONE;
 
-	for (i = 0; i < length; i++) {
+	do
+	{
 		ret = uzlib_uncompress_chksum(d);
-		if (ret != TINF_OK) break;
-		// TODO: implement protection against src_length > rd_length
+	} while (ret == TINF_OK);
+
+	if (ret != TINF_DONE)
+	{
+		printf("Decompression error: %i\n", ret);
+		exit(1);
 	}
 
 	src_length = d->source - tmp;
@@ -129,7 +135,7 @@ int main(int argc, char * argv[]) {
 		errx(1, "usage: %s oldfile newfile patchfile\n", argv[0]);
 
 	/* Open patch file */
-	if ((fd_patch = open(argv[1], O_RDONLY)) < 0)
+	if ((fd_patch = open(argv[3], O_RDONLY)) < 0)
 		err(1, "%s", argv[3]);
 
 	/*
@@ -147,10 +153,9 @@ int main(int argc, char * argv[]) {
 	 */
 
 	/* Read bsdiff header */
-	if (read(fd_patch, header, 36) < 36) {
-		err(1, "fread(%s)", argv[3]);
-	}
-
+	if (read(fd_patch, header, 36) < 36) 
+		err(1, "read(%s)", argv[3]);
+	
 	/* Check for appropriate magic */
 	if (memcmp(header, "JWE/BSDIFF40", 12) != 0)
 		errx(1, "Corrupt patch\n");
@@ -166,27 +171,27 @@ int main(int argc, char * argv[]) {
 	if (close(fd_patch))
 		err(1, "close(%s)", argv[3]);
 
-	if (((uzfctrl = open(argv[3], O_RDONLY)) < 0) 
-			|| (lseek(uzfctrl, 36, SEEK_SET) != 0)
+	if (((uzfctrl = open(argv[3], O_RDONLY)) < 0)
+			|| (lseek(uzfctrl, 36, SEEK_SET) != 36)
 			|| (uzReadOpen(&tctrl, uzfctrl) != TINF_OK))
 		err(1, "%s", argv[3]);
 
 	if (((uzfdata = open(argv[3], O_RDONLY)) < 0) 
-			|| (lseek(uzfctrl, 36 + uzctrllen, SEEK_SET) != 0)
+			|| (lseek(uzfdata, 36 + uzctrllen, SEEK_SET) != 36 + uzctrllen)
 			|| (uzReadOpen(&tdata, uzfdata) != TINF_OK))
 		err(1, "%s", argv[3]);
 
 	if (((uzfextra = open(argv[3], O_RDONLY)) < 0) 
-			|| (lseek(uzfextra, 36 + uzctrllen + uzdatalen, SEEK_SET) != 0)
+			|| (lseek(uzfextra, 36 + uzctrllen + uzdatalen, SEEK_SET) != 36 + uzctrllen + uzdatalen)
 			|| (uzReadOpen(&textra, uzfextra) != TINF_OK))
 		err(1, "%s", argv[3]);
-	
+
 	if (((fd_old = open(argv[1], O_RDONLY)) < 0)
 			|| ((oldsize = lseek(fd_old, 0, SEEK_END)) == -1)
 			|| (lseek(fd_old, 0, SEEK_SET) != 0))
 		err(1, "%s", argv[1]);
 
-	if (((fd_new = open(argv[2], O_CREAT | O_TRUNC | O_WRONLY)) < 0))
+	if ((fd_new = open(argv[2], O_CREAT | O_RDWR, 0666)) < 0)
 		err(1, "%s", argv[2]);
 
 	int64_t max_length = 0;
