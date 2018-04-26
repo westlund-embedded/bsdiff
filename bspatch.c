@@ -36,7 +36,7 @@
 #include "tinf.h"
 
 #define MIN(x, y) (((x) < (y)) ? (x) : (y))
-#define RAM_SIZE	8192	// Actual RAM usage is RAM size x 3 (oldfile, newfile, patch)
+#define RAM_SIZE	512	// Actual RAM usage is RAM size x 3 (oldfile, newfile, patch)
 
 static off_t offtin(uint8_t *buf) {
 	off_t y;
@@ -65,9 +65,10 @@ static off_t offtin(uint8_t *buf) {
 
 /* Reads compressed data until decompressed length */
 size_t uzRead(TINF_DATA *d, int fd, uint8_t *buffer, size_t length) {
-	int i, ret, rd_length, src_length, dst_length;
-	uint8_t *tmp = (uint8_t*)malloc(2048);
-	if (rd_length = read(fd, tmp, 2048) < 0)
+	int i, ret, rd_length, src_length = 0, dst_length;
+
+	uint8_t *tmp = (uint8_t*)malloc(RAM_SIZE);
+	if (rd_length = read(fd, tmp, RAM_SIZE) < 0)
 		err(1, "reading src");
 
 	d->source = tmp;
@@ -78,6 +79,13 @@ size_t uzRead(TINF_DATA *d, int fd, uint8_t *buffer, size_t length) {
 	do
 	{
 		ret = uzlib_uncompress_chksum(d);
+		if ((d->source - tmp) == RAM_SIZE)
+		{
+			/* If end of source buffer, fetch new data */
+			src_length += RAM_SIZE;
+			rd_length += read(fd, tmp, RAM_SIZE);
+			d->source = tmp;
+		}
 	} while (ret == TINF_OK);
 
 	if (ret != TINF_DONE)
@@ -86,7 +94,7 @@ size_t uzRead(TINF_DATA *d, int fd, uint8_t *buffer, size_t length) {
 		exit(1);
 	}
 
-	src_length = d->source - tmp;
+	src_length += d->source - tmp;
 	dst_length = d->dest - buffer;
 	free(tmp);
 
