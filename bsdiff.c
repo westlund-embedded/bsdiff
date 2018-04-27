@@ -37,7 +37,6 @@
 #include <unistd.h>
 
 #define MIN(x,y) (((x)<(y)) ? (x) : (y))
-struct Outbuf out = {0};
 
 static void split(off_t *I,off_t *V,off_t start,off_t len,off_t h)
 {
@@ -209,7 +208,6 @@ static void uzWriteOpen(FILE *sf, FILE *df)
     putc(0x03, df); // OS
 
 	fseeko(sf, 0, SEEK_SET);
-	
 }
 
 static void uzWriteClose(FILE *sf, FILE *df)
@@ -221,22 +219,20 @@ static void uzWriteClose(FILE *sf, FILE *df)
     // uint32_t crc = ~uzlib_crc32(source, sflen, ~0);
     // fwrite(&crc, sizeof(crc), 1, df);
 	// free(source);
-
 }
 
 static size_t uzWrite(FILE *sf, FILE *df, uint8_t *buffer, size_t length)
 {
-	printf("inlen = %i\n", length);
 	/* Store decompressed data for later, needed by crc32 to create ckecksum */
 	fwrite(buffer, 1, length, sf);
 
+	/* Compress data and write to the destination file */
+	struct Outbuf out = {0};
 	zlib_start_block(&out);
-	
-	/* Compress data and write to the destination file */	
 	uzlib_compress(&out, buffer, length);
-	zlib_finish_block(&out);
+    zlib_finish_block(&out);
 	fwrite(out.outbuf, 1, out.outlen, df);
-	printf("outlen = %i\n", out.outlen);
+	
 	return out.outlen;
 }
 
@@ -251,10 +247,9 @@ int main(int argc,char *argv[])
 	off_t oldscore,scsc;
 	off_t s,Sf,lenf,Sb,lenb;
 	off_t overlap,Ss,lens;
-	off_t i;
+	off_t i,j;
 	off_t dblen,eblen;
-	uint8_t *db,*eb;
-	uint8_t buf[24];
+	uint8_t *cb,*db,*eb;
 	uint8_t header[36];
 	FILE *sf, *df;
 		
@@ -286,10 +281,13 @@ int main(int argc,char *argv[])
 		(close(fd)==-1)) err(1,"%s",argv[2]);
 
 	if(((db=malloc(newsize+1))==NULL) ||
-		((eb=malloc(newsize+1))==NULL)) err(1,NULL);
+		((eb=malloc(newsize+1))==NULL) ||
+		((cb=malloc(newsize+1))==NULL))
+			err(1,NULL);
+
 	dblen=0;
 	eblen=0;
-
+	
 	/* Temporary file containing uncompressed data, 
 		used by uzlib for creating crc32 checksum */
 	if ((sf = fopen("crc32", "wb+")) == NULL)
@@ -318,9 +316,8 @@ int main(int argc,char *argv[])
 		err(1, "fwrite(%s)", argv[3]);
 
 	/* Compute the differences, writing ctrl as we go */
-	uzWriteOpen(sf, df);
 	
-	scan=0;len=0;
+	scan=0;len=0;j=0;
 	lastscan=0;lastpos=0;lastoffset=0;
 	while(scan<newsize) {
 		oldscore=0;
@@ -382,11 +379,11 @@ int main(int argc,char *argv[])
 			dblen+=lenf;
 			eblen+=(scan-lenb)-(lastscan+lenf);
 
-			offtout(lenf,&buf[0]);
-			offtout((scan-lenb)-(lastscan+lenf),&buf[8]);
-			offtout((pos-lenb)-(lastpos+lenf),&buf[16]);
+			offtout(lenf,&cb[j+0]);
+			offtout((scan-lenb)-(lastscan+lenf),&cb[j+8]);
+			offtout((pos-lenb)-(lastpos+lenf),&cb[j+16]);
 			
-			uzWrite(sf, df, buf, 24); //TODO: save buf and write later
+			j+=24;
 
 			lastscan=scan-lenb;
 			lastpos=pos-lenb;
@@ -394,13 +391,14 @@ int main(int argc,char *argv[])
 		};
 	};
 
+	uzWriteOpen(sf, df);
+	uzWrite(sf, df, cb, j);
 	uzWriteClose(sf, df);
 
 	/* Compute size of compressed ctrl data */
 	if ((len = ftello(df)) == -1)
 		err(1, "ftello");
 	offtout(len-36, header + 12);
-	printf("ctrl: %i\n", len-36);
 	
 	/* Write compressed diff data */
 	uzWriteOpen(sf, df);
@@ -411,7 +409,6 @@ int main(int argc,char *argv[])
 	if ((newsize = ftello(df)) == -1)
 		err(1, "ftello");
 	offtout(newsize - len, header + 20);
-	printf("diff: %i\n", newsize-len);
 
 	/* Write compressed extra data */
 	uzWriteOpen(sf, df);

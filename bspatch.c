@@ -68,7 +68,7 @@ size_t uzRead(TINF_DATA *d, int fd, uint8_t *buffer, size_t length) {
 	int i, ret = TINF_OK, rd_length = 0, src_length = 0, dst_length = 0;
 
 	uint8_t *tmp = (uint8_t*)malloc(RAM_SIZE);
-	if (rd_length = read(fd, tmp, RAM_SIZE) < 0)
+	if ((rd_length = read(fd, tmp, RAM_SIZE)) < 0)
 		err(1, "reading src");
 
 	d->source = tmp;
@@ -81,11 +81,10 @@ size_t uzRead(TINF_DATA *d, int fd, uint8_t *buffer, size_t length) {
 	dst_length = d->dest - buffer;
 	free(tmp);
 
-	printf("src_len: %i, dest_len: %i\n", src_length, dst_length);
-
 	/* adjust file pointer */
-	lseek(fd, src_length - rd_length, SEEK_CUR);
-
+	int off = src_length-rd_length;
+	int roff = lseek(fd, off, SEEK_CUR);
+	
 	return dst_length;			
 }
 
@@ -159,7 +158,6 @@ int main(int argc, char * argv[]) {
 	newsize = offtin(header + 28);
 	if ((uzctrllen < 0) || (uzdatalen < 0) || (newsize < 0))
 		errx(1, "Corrupt patch\n");
-		
 
 	/* Close patch file and re-open it with uzlib at the right places */
 	if (close(fd_patch))
@@ -192,15 +190,14 @@ int main(int argc, char * argv[]) {
 	oldpos = 0;
 	newpos = 0;
 	while (newpos < newsize) {
-
+		
 		/* Read control data */
 		if (uzRead(&tctrl, uzfctrl, buf, 24) != 24)
 			errx(1, "Corrupt patch: 1\n");
-		for (i = 0; i < 3; i++)	{
-			ctrl[i] = offtin(buf);
-			buf+=8;
+		for (i = 0; i < 24; i+=8)	{
+			ctrl[i] = offtin(&buf[i]);
 		}
-		
+
 		/* Sanity-check */
 		if (newpos + ctrl[0] > newsize)
 			errx(1, "Corrupt patch: 2\n");
