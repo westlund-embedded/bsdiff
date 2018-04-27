@@ -65,7 +65,7 @@ static off_t offtin(uint8_t *buf) {
 
 /* Reads compressed data until decompressed length */
 size_t uzRead(TINF_DATA *d, int fd, uint8_t *buffer, size_t length) {
-	int i, ret, rd_length, src_length = 0, dst_length;
+	int i, ret = TINF_OK, rd_length = 0, src_length = 0, dst_length = 0;
 
 	uint8_t *tmp = (uint8_t*)malloc(RAM_SIZE);
 	if (rd_length = read(fd, tmp, RAM_SIZE) < 0)
@@ -73,30 +73,15 @@ size_t uzRead(TINF_DATA *d, int fd, uint8_t *buffer, size_t length) {
 
 	d->source = tmp;
 	d->dest = buffer;
-	d->destSize = 1;
-	d->checksum_type = TINF_CHKSUM_NONE;
+	d->destSize = length;
 
-	do
-	{
-		ret = uzlib_uncompress_chksum(d);
-		if ((d->source - tmp) == RAM_SIZE)
-		{
-			/* If end of source buffer, fetch new data */
-			src_length += RAM_SIZE;
-			rd_length += read(fd, tmp, RAM_SIZE);
-			d->source = tmp;
-		}
-	} while (ret == TINF_OK);
+	ret = uzlib_uncompress(d);
 
-	if (ret != TINF_DONE)
-	{
-		printf("Decompression error: %i\n", ret);
-		exit(1);
-	}
-
-	src_length += d->source - tmp;
+	src_length = d->source - tmp;
 	dst_length = d->dest - buffer;
 	free(tmp);
+
+	printf("src_len: %i, dest_len: %i\n", src_length, dst_length);
 
 	/* adjust file pointer */
 	lseek(fd, src_length - rd_length, SEEK_CUR);
@@ -174,6 +159,7 @@ int main(int argc, char * argv[]) {
 	newsize = offtin(header + 28);
 	if ((uzctrllen < 0) || (uzdatalen < 0) || (newsize < 0))
 		errx(1, "Corrupt patch\n");
+		
 
 	/* Close patch file and re-open it with uzlib at the right places */
 	if (close(fd_patch))
@@ -209,7 +195,7 @@ int main(int argc, char * argv[]) {
 
 		/* Read control data */
 		if (uzRead(&tctrl, uzfctrl, buf, 24) != 24)
-			errx(1, "Corrupt patch\n");
+			errx(1, "Corrupt patch: 1\n");
 		for (i = 0; i < 3; i++)	{
 			ctrl[i] = offtin(buf);
 			buf+=8;
@@ -217,7 +203,7 @@ int main(int argc, char * argv[]) {
 		
 		/* Sanity-check */
 		if (newpos + ctrl[0] > newsize)
-			errx(1, "Corrupt patch\n");
+			errx(1, "Corrupt patch: 2\n");
 
 		while (ctrl[0]) {
 			max_length = MIN(ctrl[0], RAM_SIZE);
@@ -227,8 +213,9 @@ int main(int argc, char * argv[]) {
 
 			/* Read diff string */
 			lenread = uzRead(&tdata, uzfdata, new, max_length);
-			if (lenread < max_length)
-				errx(1, "Corrupt patch\n");
+			
+			if (lenread != max_length)
+				errx(1, "Corrupt patch: 3\n");
 
 			/* Add old data to diff string */
 			for (i = 0; i < max_length; i++)
@@ -248,7 +235,7 @@ int main(int argc, char * argv[]) {
 
 		/* Sanity-check */
 		if (newpos + ctrl[1] > newsize)
-			errx(1, "Corrupt patch\n");
+			errx(1, "Corrupt patch: 4\n");
 
 		while (ctrl[1]) {
 
@@ -257,7 +244,7 @@ int main(int argc, char * argv[]) {
 			/* Read extra string */
 			lenread = uzRead(&textra, uzfextra, new, max_length);
 			if (lenread < max_length)
-				errx(1, "Corrupt patch\n");
+				errx(1, "Corrupt patch: 5\n");
 
 			/* Adjust pointers */
 			newpos += max_length;

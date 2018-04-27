@@ -37,6 +37,7 @@
 #include <unistd.h>
 
 #define MIN(x,y) (((x)<(y)) ? (x) : (y))
+struct Outbuf out = {0};
 
 static void split(off_t *I,off_t *V,off_t start,off_t len,off_t h)
 {
@@ -208,31 +209,34 @@ static void uzWriteOpen(FILE *sf, FILE *df)
     putc(0x03, df); // OS
 
 	fseeko(sf, 0, SEEK_SET);
+	
 }
 
 static void uzWriteClose(FILE *sf, FILE *df)
 {
-	int sflen = ftello(sf);
-	char *source = (char*)malloc(sflen);
-	fseeko(sf, 0, SEEK_SET);
-	fread(source, 1, sflen, sf);
-    uint32_t crc = ~uzlib_crc32(source, sflen, ~0);
-    fwrite(&crc, sizeof(crc), 1, df);
-	free(source);
+	// int sflen = ftello(sf);
+	// char *source = (char*)malloc(sflen);
+	// fseeko(sf, 0, SEEK_SET);
+	// fread(source, 1, sflen, sf);
+    // uint32_t crc = ~uzlib_crc32(source, sflen, ~0);
+    // fwrite(&crc, sizeof(crc), 1, df);
+	// free(source);
+
 }
 
 static size_t uzWrite(FILE *sf, FILE *df, uint8_t *buffer, size_t length)
 {
+	printf("inlen = %i\n", length);
 	/* Store decompressed data for later, needed by crc32 to create ckecksum */
 	fwrite(buffer, 1, length, sf);
-	
-	/* Compress data and write to the destination file */
-	struct Outbuf out = {0};
+
 	zlib_start_block(&out);
-	uzlib_compress(&out, buffer, length);
-    zlib_finish_block(&out);
-	fwrite(out.outbuf, 1, out.outlen, df);
 	
+	/* Compress data and write to the destination file */	
+	uzlib_compress(&out, buffer, length);
+	zlib_finish_block(&out);
+	fwrite(out.outbuf, 1, out.outlen, df);
+	printf("outlen = %i\n", out.outlen);
 	return out.outlen;
 }
 
@@ -382,7 +386,7 @@ int main(int argc,char *argv[])
 			offtout((scan-lenb)-(lastscan+lenf),&buf[8]);
 			offtout((pos-lenb)-(lastpos+lenf),&buf[16]);
 			
-			uzWrite(sf, df, buf, 24);
+			uzWrite(sf, df, buf, 24); //TODO: save buf and write later
 
 			lastscan=scan-lenb;
 			lastpos=pos-lenb;
@@ -396,7 +400,8 @@ int main(int argc,char *argv[])
 	if ((len = ftello(df)) == -1)
 		err(1, "ftello");
 	offtout(len-36, header + 12);
-
+	printf("ctrl: %i\n", len-36);
+	
 	/* Write compressed diff data */
 	uzWriteOpen(sf, df);
 	uzWrite(sf, df, db, dblen);
@@ -406,6 +411,7 @@ int main(int argc,char *argv[])
 	if ((newsize = ftello(df)) == -1)
 		err(1, "ftello");
 	offtout(newsize - len, header + 20);
+	printf("diff: %i\n", newsize-len);
 
 	/* Write compressed extra data */
 	uzWriteOpen(sf, df);
