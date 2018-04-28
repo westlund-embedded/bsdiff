@@ -64,34 +64,43 @@ static off_t offtin(uint8_t *buf) {
 }
 
 /* Reads compressed data until decompressed length */
-size_t uzRead(TINF_DATA *d, int fd, uint8_t *buffer, size_t length) {
+size_t uzRead(TINF_DATA *d, int fd, uint8_t *buffer, size_t length, int caller) {
 	int i, ret = TINF_OK, rd_length = 0, src_length = 0, dst_length = 0;
-
+	static int ctrllen = 0;
 	uint8_t *tmp = (uint8_t*)malloc(RAM_SIZE);
 	if ((rd_length = read(fd, tmp, RAM_SIZE)) < 0)
 		err(1, "reading src");
 
-	printf("rd_len: %i\n", rd_length);
+	// printf("rd_len: %i\n", rd_length);
+	// printf("ctrl[%i]\n", caller);
+	if (caller == 0)
+	{
+		ctrllen+=length;
+		printf("ctrllen: %i\n", ctrllen);
+	}
 
 	d->source = tmp;
 	d->dest = buffer;
 	d->destSize = length;
 
 	ret = uzlib_uncompress(d);
+	if (ret != TINF_OK)
+		printf("ERROR ret: %i\n", ret);
 
 	src_length = d->source - tmp;
 	dst_length = d->dest - buffer;
 	free(tmp);
 
-	printf("src_len: %i\n", src_length);
-	printf("dst_len: %i\n", dst_length);
+	// printf("src_len: %i\n", src_length);
+	// printf("dst_len: %i\n", dst_length);
+
 
 	/* adjust file pointer */
 	int off = src_length-rd_length;
 	int roff = lseek(fd, off, SEEK_CUR);
 
-	printf("off: %i\n", off);
-	printf("roff: %i\n", roff);
+	// printf("off: %i\n", off);
+	// printf("roff: %i\n", roff);
 
 	return dst_length;			
 }
@@ -200,7 +209,7 @@ int main(int argc, char * argv[]) {
 	while (newpos < newsize) {
 		
 		/* Read control data */
-		if (uzRead(&tctrl, uzfctrl, buf, 24) != 24)
+		if (uzRead(&tctrl, uzfctrl, buf, 24, 0) != 24)
 			errx(1, "Corrupt patch: 1\n");
 		for (i = 0; i < 3; i++)	{
 			ctrl[i] = offtin(&buf[i<<3]);
@@ -219,7 +228,7 @@ int main(int argc, char * argv[]) {
 			read(fd_old, old, max_length);
 
 			/* Read diff string */
-			lenread = uzRead(&tdata, uzfdata, new, max_length);
+			lenread = uzRead(&tdata, uzfdata, new, max_length, 1);
 			
 			if (lenread != max_length)
 				errx(1, "Corrupt patch: 3\n");
@@ -249,7 +258,7 @@ int main(int argc, char * argv[]) {
 			max_length = MIN(ctrl[1], RAM_SIZE);
 
 			/* Read extra string */
-			lenread = uzRead(&textra, uzfextra, new, max_length);
+			lenread = uzRead(&textra, uzfextra, new, max_length, 2);
 			if (lenread < max_length)
 				errx(1, "Corrupt patch: 5\n");
 
