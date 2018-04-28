@@ -36,7 +36,7 @@
 #include "tinf.h"
 
 #define MIN(x, y) (((x) < (y)) ? (x) : (y))
-#define RAM_SIZE	512	// Actual RAM usage is RAM size x 3 (oldfile, newfile, patch)
+#define RAM_SIZE	1024	// Actual RAM usage is RAM size x 3 (oldfile, newfile, patch)
 
 static off_t offtin(uint8_t *buf) {
 	off_t y;
@@ -71,6 +71,8 @@ size_t uzRead(TINF_DATA *d, int fd, uint8_t *buffer, size_t length) {
 	if ((rd_length = read(fd, tmp, RAM_SIZE)) < 0)
 		err(1, "reading src");
 
+	printf("rd_len: %i\n", rd_length);
+
 	d->source = tmp;
 	d->dest = buffer;
 	d->destSize = length;
@@ -81,10 +83,16 @@ size_t uzRead(TINF_DATA *d, int fd, uint8_t *buffer, size_t length) {
 	dst_length = d->dest - buffer;
 	free(tmp);
 
+	printf("src_len: %i\n", src_length);
+	printf("dst_len: %i\n", dst_length);
+
 	/* adjust file pointer */
 	int off = src_length-rd_length;
 	int roff = lseek(fd, off, SEEK_CUR);
-	
+
+	printf("off: %i\n", off);
+	printf("roff: %i\n", roff);
+
 	return dst_length;			
 }
 
@@ -194,9 +202,11 @@ int main(int argc, char * argv[]) {
 		/* Read control data */
 		if (uzRead(&tctrl, uzfctrl, buf, 24) != 24)
 			errx(1, "Corrupt patch: 1\n");
-		for (i = 0; i < 24; i+=8)	{
-			ctrl[i] = offtin(&buf[i]);
+		for (i = 0; i < 3; i++)	{
+			ctrl[i] = offtin(&buf[i<<3]);
 		}
+
+		printf("%i, %i, %i\n", ctrl[0], ctrl[1], ctrl[2]);
 
 		/* Sanity-check */
 		if (newpos + ctrl[0] > newsize)

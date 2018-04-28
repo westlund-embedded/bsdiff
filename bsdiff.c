@@ -247,8 +247,8 @@ int main(int argc,char *argv[])
 	off_t oldscore,scsc;
 	off_t s,Sf,lenf,Sb,lenb;
 	off_t overlap,Ss,lens;
-	off_t i,j;
-	off_t dblen,eblen;
+	off_t i;
+	off_t cblen,dblen,eblen;
 	uint8_t *cb,*db,*eb;
 	uint8_t header[36];
 	FILE *sf, *df;
@@ -317,7 +317,7 @@ int main(int argc,char *argv[])
 
 	/* Compute the differences, writing ctrl as we go */
 	
-	scan=0;len=0;j=0;
+	scan=0;len=0;cblen=0;
 	lastscan=0;lastpos=0;lastoffset=0;
 	while(scan<newsize) {
 		oldscore=0;
@@ -379,11 +379,11 @@ int main(int argc,char *argv[])
 			dblen+=lenf;
 			eblen+=(scan-lenb)-(lastscan+lenf);
 
-			offtout(lenf,&cb[j+0]);
-			offtout((scan-lenb)-(lastscan+lenf),&cb[j+8]);
-			offtout((pos-lenb)-(lastpos+lenf),&cb[j+16]);
-			
-			j+=24;
+			offtout(lenf,&cb[cblen+0]);
+			offtout((scan-lenb)-(lastscan+lenf),&cb[cblen+8]);
+			offtout((pos-lenb)-(lastpos+lenf),&cb[cblen+16]);
+
+			cblen+=24;
 
 			lastscan=scan-lenb;
 			lastpos=pos-lenb;
@@ -391,15 +391,16 @@ int main(int argc,char *argv[])
 		};
 	};
 
+	/* Wrire compressed ctrl data */
 	uzWriteOpen(sf, df);
-	uzWrite(sf, df, cb, j);
+	uzWrite(sf, df, cb, cblen);
 	uzWriteClose(sf, df);
 
 	/* Compute size of compressed ctrl data */
 	if ((len = ftello(df)) == -1)
 		err(1, "ftello");
 	offtout(len-36, header + 12);
-	
+
 	/* Write compressed diff data */
 	uzWriteOpen(sf, df);
 	uzWrite(sf, df, db, dblen);
