@@ -396,8 +396,6 @@ int main(int argc,char *argv[])
 	uzWrite(sf, df, cb, cblen);
 	uzWriteClose(sf, df);
 
-	printf("cblen: %i\n", cblen);
-
 	/* Compute size of compressed ctrl data */
 	if ((len = ftello(df)) == -1)
 		err(1, "ftello");

@@ -36,7 +36,7 @@
 #include "tinf.h"
 
 #define MIN(x, y) (((x) < (y)) ? (x) : (y))
-#define RAM_SIZE	1024	// Actual RAM usage is RAM size x 3 (oldfile, newfile, patch)
+#define RAM_SIZE	512	// Actual RAM usage is RAM size x 4 (oldfile, newfile, patch)
 
 static off_t offtin(uint8_t *buf) {
 	off_t y;
@@ -66,42 +66,37 @@ static off_t offtin(uint8_t *buf) {
 /* Reads compressed data until decompressed length */
 size_t uzRead(TINF_DATA *d, int fd, uint8_t *buffer, size_t length, int caller) {
 	int i, ret = TINF_OK, rd_length = 0, src_length = 0, dst_length = 0;
-	static int ctrllen = 0;
+	
 	uint8_t *tmp = (uint8_t*)malloc(RAM_SIZE);
 	if ((rd_length = read(fd, tmp, RAM_SIZE)) < 0)
 		err(1, "reading src");
-
-	// printf("rd_len: %i\n", rd_length);
-	// printf("ctrl[%i]\n", caller);
-	if (caller == 0)
-	{
-		ctrllen+=length;
-		printf("ctrllen: %i\n", ctrllen);
-	}
 
 	d->source = tmp;
 	d->dest = buffer;
 	d->destSize = length;
 
+	// TODO: how to continue decompress when reading in new buffer?
+	
 	ret = uzlib_uncompress(d);
+	
 	if (ret != TINF_OK)
-		printf("ERROR ret: %i\n", ret);
+		err(1, "Decompression error\n");
+
 
 	src_length = d->source - tmp;
 	dst_length = d->dest - buffer;
 	free(tmp);
 
-	// printf("src_len: %i\n", src_length);
-	// printf("dst_len: %i\n", dst_length);
-
+	printf("rd_len: %i\n", rd_length);
+	printf("src_len: %i\n", src_length);
+	printf("dst_len: %i\n", dst_length);
 
 	/* adjust file pointer */
 	int off = src_length-rd_length;
 	int roff = lseek(fd, off, SEEK_CUR);
 
-	// printf("off: %i\n", off);
-	// printf("roff: %i\n", roff);
-
+	printf("off: %i\n", off);
+	
 	return dst_length;			
 }
 
@@ -173,6 +168,7 @@ int main(int argc, char * argv[]) {
 	uzctrllen = offtin(header + 12);
 	uzdatalen = offtin(header + 20);
 	newsize = offtin(header + 28);
+
 	if ((uzctrllen < 0) || (uzdatalen < 0) || (newsize < 0))
 		errx(1, "Corrupt patch\n");
 
@@ -213,9 +209,8 @@ int main(int argc, char * argv[]) {
 			errx(1, "Corrupt patch: 1\n");
 		for (i = 0; i < 3; i++)	{
 			ctrl[i] = offtin(&buf[i<<3]);
+			printf("ctrl[%i]=%i\n", i, ctrl[i]);
 		}
-
-		printf("%i, %i, %i\n", ctrl[0], ctrl[1], ctrl[2]);
 
 		/* Sanity-check */
 		if (newpos + ctrl[0] > newsize)
@@ -272,11 +267,12 @@ int main(int argc, char * argv[]) {
 			write(fd_new, new, max_length);
 
 		}
-
+				
 		oldpos += ctrl[2];
 
 		/* Adjust file pointer */
-		lseek(fd_old, ctrl[2], SEEK_CUR);
+		int off = lseek(fd_old, ctrl[2], SEEK_CUR);
+		printf("ctrl[2]=%i, off=%i, oldpos=%i\n", ctrl[2], off, oldpos);
 	};
 
 	close(fd_new);
