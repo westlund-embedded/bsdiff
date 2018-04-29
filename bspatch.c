@@ -75,27 +75,20 @@ size_t uzRead(TINF_DATA *d, int fd, uint8_t *buffer, size_t length, int caller) 
 	d->dest = buffer;
 	d->destSize = length;
 
-	// TODO: how to continue decompress when reading in new buffer?
-	
 	ret = uzlib_uncompress(d);
-	
+
 	if (ret != TINF_OK)
 		err(1, "Decompression error\n");
-
 
 	src_length = d->source - tmp;
 	dst_length = d->dest - buffer;
 	free(tmp);
 
-	printf("rd_len: %i\n", rd_length);
-	printf("src_len: %i\n", src_length);
-	printf("dst_len: %i\n", dst_length);
-
 	/* adjust file pointer */
 	int off = src_length-rd_length;
 	int roff = lseek(fd, off, SEEK_CUR);
 
-	printf("off: %i\n", off);
+	printf("foff[%i]: %i\n", caller, roff);
 	
 	return dst_length;			
 }
@@ -209,7 +202,6 @@ int main(int argc, char * argv[]) {
 			errx(1, "Corrupt patch: 1\n");
 		for (i = 0; i < 3; i++)	{
 			ctrl[i] = offtin(&buf[i<<3]);
-			printf("ctrl[%i]=%i\n", i, ctrl[i]);
 		}
 
 		/* Sanity-check */
