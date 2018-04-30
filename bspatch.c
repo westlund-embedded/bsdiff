@@ -36,7 +36,7 @@
 #include "tinf.h"
 
 #define MIN(x, y) (((x) < (y)) ? (x) : (y))
-#define RAM_SIZE	512	// Actual RAM usage is RAM size x 4 (oldfile, newfile, patch)
+#define RAM_SIZE	256	// Actual RAM usage is RAM size x 4 (oldfile, newfile, patch)
 
 static off_t offtin(uint8_t *buf) {
 	off_t y;
@@ -64,12 +64,24 @@ static off_t offtin(uint8_t *buf) {
 }
 
 /* Reads compressed data until decompressed length */
-size_t uzRead(TINF_DATA *d, int fd, uint8_t *buffer, size_t length, int caller) {
+size_t uzRead(TINF_DATA *d, int fd, uint8_t *buffer, size_t length) {
 	int i, ret = TINF_OK, rd_length = 0, src_length = 0, dst_length = 0;
 	
 	uint8_t *tmp = (uint8_t*)malloc(RAM_SIZE);
-	if ((rd_length = read(fd, tmp, RAM_SIZE)) < 0)
-		err(1, "reading src");
+
+	if (d->curlen)
+	{
+		if ((rd_length = read(fd, &tmp[1], RAM_SIZE - 1)) < 0)
+			err(1, "reading src");
+		tmp[0] = d->source[0];	
+	}
+	else
+	{
+		if ((rd_length = read(fd, tmp, RAM_SIZE)) < 0)
+			err(1, "reading src");
+	}
+
+	printf("culen=%i, lzoff=%i\n", d->curlen, d->lzOff);
 
 	d->source = tmp;
 	d->dest = buffer;
@@ -85,11 +97,9 @@ size_t uzRead(TINF_DATA *d, int fd, uint8_t *buffer, size_t length, int caller) 
 	free(tmp);
 
 	/* adjust file pointer */
-	int off = src_length-rd_length;
+	int off = src_length - rd_length;
 	int roff = lseek(fd, off, SEEK_CUR);
-
-	printf("foff[%i]: %i\n", caller, roff);
-	
+		
 	return dst_length;			
 }
 
@@ -195,10 +205,11 @@ int main(int argc, char * argv[]) {
 	int64_t max_length = 0;
 	oldpos = 0;
 	newpos = 0;
+	
 	while (newpos < newsize) {
 		
 		/* Read control data */
-		if (uzRead(&tctrl, uzfctrl, buf, 24, 0) != 24)
+		if (uzRead(&tctrl, uzfctrl, buf, 24) != 24)
 			errx(1, "Corrupt patch: 1\n");
 		for (i = 0; i < 3; i++)	{
 			ctrl[i] = offtin(&buf[i<<3]);
@@ -215,7 +226,7 @@ int main(int argc, char * argv[]) {
 			read(fd_old, old, max_length);
 
 			/* Read diff string */
-			lenread = uzRead(&tdata, uzfdata, new, max_length, 1);
+			lenread = uzRead(&tdata, uzfdata, new, max_length);
 			
 			if (lenread != max_length)
 				errx(1, "Corrupt patch: 3\n");
@@ -245,7 +256,7 @@ int main(int argc, char * argv[]) {
 			max_length = MIN(ctrl[1], RAM_SIZE);
 
 			/* Read extra string */
-			lenread = uzRead(&textra, uzfextra, new, max_length, 2);
+			lenread = uzRead(&textra, uzfextra, new, max_length);
 			if (lenread < max_length)
 				errx(1, "Corrupt patch: 5\n");
 
@@ -257,14 +268,13 @@ int main(int argc, char * argv[]) {
 
 			/* Write to new */
 			write(fd_new, new, max_length);
-
 		}
 				
 		oldpos += ctrl[2];
 
 		/* Adjust file pointer */
 		int off = lseek(fd_old, ctrl[2], SEEK_CUR);
-		printf("ctrl[2]=%i, off=%i, oldpos=%i\n", ctrl[2], off, oldpos);
+		
 	};
 
 	close(fd_new);
