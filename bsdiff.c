@@ -212,6 +212,7 @@ static void uzWriteOpen(FILE *sf, FILE *df)
 
 static void uzWriteClose(FILE *sf, FILE *df)
 {
+	// TODO: add checksum
 	// int sflen = ftello(sf);
 	// char *source = (char*)malloc(sflen);
 	// fseeko(sf, 0, SEEK_SET);
@@ -232,7 +233,7 @@ static size_t uzWrite(FILE *sf, FILE *df, uint8_t *buffer, size_t length)
 	uzlib_compress(&out, buffer, length);
     zlib_finish_block(&out);
 	fwrite(out.outbuf, 1, out.outlen, df);
-	
+		
 	return out.outlen;
 }
 
@@ -280,11 +281,12 @@ int main(int argc,char *argv[])
 		(read(fd,new,newsize)!=newsize) ||
 		(close(fd)==-1)) err(1,"%s",argv[2]);
 
-	if(((db=malloc(newsize+1))==NULL) ||
-		((eb=malloc(newsize+1))==NULL) ||
-		((cb=malloc(newsize+1))==NULL))
+	if(((cb=malloc(newsize+1))==NULL) ||
+		((db=malloc(newsize+1))==NULL) ||
+		((eb=malloc(newsize+1))==NULL))
 			err(1,NULL);
 
+	cblen=0;
 	dblen=0;
 	eblen=0;
 	
@@ -315,9 +317,9 @@ int main(int argc,char *argv[])
 	if (fwrite(header, 36, 1, df) != 1)
 		err(1, "fwrite(%s)", argv[3]);
 
-	/* Compute the differences, writing ctrl as we go */
+	/* Compute the differences, save ctrl as we go */
 	
-	scan=0;len=0;cblen=0;
+	scan=0;len=0;
 	lastscan=0;lastpos=0;lastoffset=0;
 	while(scan<newsize) {
 		oldscore=0;
@@ -391,7 +393,7 @@ int main(int argc,char *argv[])
 		};
 	};
 
-	/* Wrire compressed ctrl data */
+	/* Write compressed ctrl data */
 	uzWriteOpen(sf, df);
 	uzWrite(sf, df, cb, cblen);
 	uzWriteClose(sf, df);
@@ -400,7 +402,7 @@ int main(int argc,char *argv[])
 	if ((len = ftello(df)) == -1)
 		err(1, "ftello");
 	offtout(len-36, header + 12);
-
+	
 	/* Write compressed diff data */
 	uzWriteOpen(sf, df);
 	uzWrite(sf, df, db, dblen);
@@ -430,6 +432,7 @@ int main(int argc,char *argv[])
 		err(1, "remove");
 
 	/* Free the memory we used */
+	free(cb);
 	free(db);
 	free(eb);
 	free(I);

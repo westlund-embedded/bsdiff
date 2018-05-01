@@ -36,7 +36,7 @@
 #include "tinf.h"
 
 #define MIN(x, y) (((x) < (y)) ? (x) : (y))
-#define RAM_SIZE	256	// Actual RAM usage is RAM size x 4 (oldfile, newfile, patch)
+#define RAM_SIZE	64	// Actual RAM usage is RAM size x 4 (oldfile, newfile, patch)
 
 static off_t offtin(uint8_t *buf) {
 	off_t y;
@@ -66,39 +66,31 @@ static off_t offtin(uint8_t *buf) {
 /* Reads compressed data until decompressed length */
 size_t uzRead(TINF_DATA *d, int fd, uint8_t *buffer, size_t length) {
 	int i, ret = TINF_OK, rd_length = 0, src_length = 0, dst_length = 0;
-	
+		
 	uint8_t *tmp = (uint8_t*)malloc(RAM_SIZE);
 
-	if (d->curlen)
-	{
-		if ((rd_length = read(fd, &tmp[1], RAM_SIZE - 1)) < 0)
-			err(1, "reading src");
-		tmp[0] = d->source[0];	
-	}
-	else
-	{
-		if ((rd_length = read(fd, tmp, RAM_SIZE)) < 0)
-			err(1, "reading src");
-	}
-
-	printf("culen=%i, lzoff=%i\n", d->curlen, d->lzOff);
+	if ((rd_length = read(fd, tmp, RAM_SIZE)) < 0)
+		err(1, "reading src");
 
 	d->source = tmp;
 	d->dest = buffer;
 	d->destSize = length;
 
+	// TODO: decompression is dependent on old dest buffer specified by d->lZoff, need to save old buffer data
+
 	ret = uzlib_uncompress(d);
 
 	if (ret != TINF_OK)
 		err(1, "Decompression error\n");
-
+	
 	src_length = d->source - tmp;
 	dst_length = d->dest - buffer;
-	free(tmp);
 
 	/* adjust file pointer */
 	int off = src_length - rd_length;
 	int roff = lseek(fd, off, SEEK_CUR);
+	
+	free(tmp);	
 		
 	return dst_length;			
 }
@@ -131,8 +123,9 @@ int main(int argc, char * argv[]) {
 	off_t lenread;
 	off_t i;
 
-	uint8_t old[RAM_SIZE];
+	uint8_t old[RAM_SIZE]; // TODO: malloc
 	uint8_t new[RAM_SIZE];
+	uint8_t wrbuf[RAM_SIZE];
 		
 	buf = (uint8_t*)malloc(24);
 
@@ -220,6 +213,7 @@ int main(int argc, char * argv[]) {
 			errx(1, "Corrupt patch: 2\n");
 
 		while (ctrl[0]) {
+			
 			max_length = MIN(ctrl[0], RAM_SIZE);
 
 			/* Read old data */
@@ -234,7 +228,9 @@ int main(int argc, char * argv[]) {
 			/* Add old data to diff string */
 			for (i = 0; i < max_length; i++)
 				if ((oldpos + i >= 0) && (oldpos + i < oldsize))
-					new[i] += old[i];
+				{
+					wrbuf[i] = new[i] + old[i];
+				}
 
 			/* Adjust pointers */
 			newpos += max_length;
@@ -244,7 +240,7 @@ int main(int argc, char * argv[]) {
 			ctrl[0] -= max_length;
 
 			/* Write to new */
-			write(fd_new, new, max_length);
+			write(fd_new, wrbuf, max_length);
 		}
 
 		/* Sanity-check */
