@@ -233,7 +233,7 @@ static size_t uzWrite(FILE *sf, FILE *df, uint8_t *buffer, size_t length)
 	uzlib_compress(&out, buffer, length);
     zlib_finish_block(&out);
 	fwrite(out.outbuf, 1, out.outlen, df);
-		
+
 	return out.outlen;
 }
 
@@ -417,7 +417,7 @@ int main(int argc,char *argv[])
 	uzWriteOpen(sf, df);
 	uzWrite(sf, df, eb, eblen);
 	uzWriteClose(sf, df);
-	
+
 	/* Seek to the beginning, write the header, and close the file */
 	if (fseeko(df, 0, SEEK_SET))
 		err(1, "fseeko");

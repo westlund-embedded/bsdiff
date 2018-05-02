@@ -66,13 +66,13 @@ static off_t offtin(uint8_t *buf)
 /* Reads compressed data until decompressed length */
 size_t uzRead(TINF_DATA *d, int fd, uint8_t *buffer, size_t buflen, int declen)
 {
-	int i, ret = TINF_OK, rd_length = 0, src_length = 0, dst_length = 0;
+	int i, ret = TINF_OK, rd_length = 0, dst_length = 0;
 	int halfbuf = buflen >> 1;
 
-	uint8_t *tmp = (uint8_t *)malloc(RAM_SIZE);
+	uint8_t *tmp = (uint8_t *)malloc(RAM_SIZE+100);
 
 	/* Read in more source from file */
-	if ((rd_length = read(fd, tmp, RAM_SIZE)) < 0)
+	if ((rd_length = read(fd, tmp, RAM_SIZE+100)) < 0)
 		err(1, "reading src");
 
 	d->source = tmp;
@@ -91,7 +91,7 @@ size_t uzRead(TINF_DATA *d, int fd, uint8_t *buffer, size_t buflen, int declen)
 
 	/* Move bytes of decompressed data to lower half of buffer */
 	memcpy(&buffer[0], &buffer[halfbuf], halfbuf);
-
+	
 	/* Decompress the rest to out buffer if there is any */
 	if (declen > 0)
 	{
@@ -104,11 +104,8 @@ size_t uzRead(TINF_DATA *d, int fd, uint8_t *buffer, size_t buflen, int declen)
 	if (ret != TINF_OK)
 		err(1, "Decompression error: %i\n", ret);
 
-	src_length = d->source - tmp;
-
 	/* adjust file pointer */
-	int off = src_length - rd_length;
-	int roff = lseek(fd, off, SEEK_CUR);
+	lseek(fd, d->source - tmp - rd_length, SEEK_CUR);
 
 	free(tmp);
 
