@@ -66,38 +66,56 @@ static off_t offtin(uint8_t *buf)
 /* Reads compressed data until decompressed length */
 size_t uzRead(TINF_DATA *d, int fd, uint8_t *buffer, size_t buflen, int declen)
 {
-	int i, ret = TINF_OK, rd_length = 0, dst_length = 0;
+	int i, ret = TINF_OK, rd_length = 0, dst_length = 0, destsize;
 	int halfbuf = buflen >> 1;
+	static int j = 0;
 
-	uint8_t *tmp = (uint8_t *)malloc(RAM_SIZE+100);
+	uint8_t *tmp = (uint8_t *)malloc(RAM_SIZE);
 
 	/* Read in more source from file */
-	if ((rd_length = read(fd, tmp, RAM_SIZE+100)) < 0)
+	if ((rd_length = read(fd, tmp, RAM_SIZE)) < 0)
 		err(1, "reading src");
 
 	d->source = tmp;
 
-	/* Move upper half of buffer to lower half of buffer, 
-	   this is old data that might be needed by decompression */
-	memcpy(&buffer[0], &buffer[halfbuf], halfbuf);
+	destsize = MIN(declen, halfbuf);
 
-	/* Start filling upper half of buffer */
+	/** Shift upper half of buffer to lower half of buffer, 
+	 *  this is old data that might be needed by decompression */
+	memcpy(&buffer[halfbuf - destsize], &buffer[halfbuf], destsize);
+
+	/* Start filling upper half of buffer with decompressed data */
 	d->dest = &buffer[halfbuf];
-	d->destSize = MIN(declen, halfbuf);
+	d->destSize = destsize;
 	declen -= halfbuf;
+	
 	ret = uzlib_uncompress(d);
 
 	dst_length = d->dest - &buffer[halfbuf];
 
 	/* Move bytes of decompressed data to lower half of buffer */
 	memcpy(&buffer[0], &buffer[halfbuf], halfbuf);
-	
+
 	/* Decompress the rest to out buffer if there is any */
 	if (declen > 0)
 	{
 		d->dest = &buffer[halfbuf];
-		d->destSize = declen;
-		ret |= uzlib_uncompress(d);
+
+		for (i = 0; i < declen; i++)
+		{
+			/** Decompress one byte at a time and monitor source buffer,
+			 *  the source buffer could be larger than destination buffer
+			 *  if all bytes different */
+			d->destSize = 1;
+			ret |= uzlib_uncompress(d);
+			
+			if ((d->source - tmp) == RAM_SIZE)
+			{
+				rd_length = read(fd, tmp, RAM_SIZE);
+				d->source = tmp;
+			}
+		}
+
 		dst_length += d->dest - &buffer[halfbuf];
 	}
 
@@ -105,7 +123,7 @@ size_t uzRead(TINF_DATA *d, int fd, uint8_t *buffer, size_t buflen, int declen)
 		err(1, "Decompression error: %i\n", ret);
 
 	/* adjust file pointer */
-	lseek(fd, d->source - tmp - rd_length, SEEK_CUR);
+	int fp = lseek(fd, d->source - tmp - rd_length, SEEK_CUR);
 
 	free(tmp);
 
@@ -144,9 +162,7 @@ int main(int argc, char *argv[])
 
 	uint8_t old[RAM_SIZE]; // TODO: malloc
 	uint8_t new[RAM_SIZE];
-	uint8_t wrbuf[RAM_SIZE];
-
-	buf = (uint8_t *)malloc(24);
+	uint8_t ctr[RAM_SIZE];
 
 	uzlib_init();
 
@@ -212,13 +228,13 @@ int main(int argc, char *argv[])
 
 	while (newpos < newsize)
 	{
-
 		/* Read control data */
 		if (uzRead(&tctrl, uzfctrl, buf, 24, 24) != 24)
 			errx(1, "Corrupt patch: 1\n");
 		for (i = 0; i < 3; i++)
 		{
 			ctrl[i] = offtin(&buf[i << 3]);
+			//printf("ctrl[%i]=%i\n", i, ctrl[i]);
 		}
 
 		/* Sanity-check */
@@ -227,7 +243,6 @@ int main(int argc, char *argv[])
 
 		while (ctrl[0])
 		{
-
 			max_length = MIN(ctrl[0], RAM_SIZE);
 
 			/* Read old data */
@@ -262,7 +277,6 @@ int main(int argc, char *argv[])
 
 		while (ctrl[1])
 		{
-
 			max_length = MIN(ctrl[1], RAM_SIZE);
 
 			/* Read extra string */
@@ -279,7 +293,7 @@ int main(int argc, char *argv[])
 			/* Write to new */
 			write(fd_new, new, max_length);
 		}
-
+		
 		oldpos += ctrl[2];
 
 		/* Adjust file pointer */
