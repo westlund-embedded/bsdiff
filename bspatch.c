@@ -35,7 +35,7 @@
 #include "tinf.h"
 
 #define MIN(x, y) (((x) < (y)) ? (x) : (y))
-#define RAM_SIZE 1024 // Actual RAM usage is RAM size x 4 (oldfile, newfile, patch)
+#define RAM_SIZE 512 // Actual RAM usage is RAM size x 4 (oldfile, newfile, patch)
 
 static off_t offtin(uint8_t *buf)
 {
@@ -66,67 +66,40 @@ static off_t offtin(uint8_t *buf)
 /* Reads compressed data until decompressed length */
 size_t uzRead(TINF_DATA *d, int fd, uint8_t *buffer, int length)
 {
-	int i, ret = TINF_OK, rd_length = 0, dst_length = 0, destsize;
-	int halfbuf = RAM_SIZE >> 1;
-
-	uint8_t *tmp = (uint8_t *)malloc(RAM_SIZE);
+	int i, ret = TINF_OK, rd_length = 0, dst_len = 0, src_len = 0;
+	
+	uint8_t *tmp = (uint8_t *)malloc(RAM_SIZE * 2);
 
 	/* Read in more source from file */
-	if ((rd_length = read(fd, tmp, RAM_SIZE)) < 0)
+	if ((rd_length = read(fd, tmp, RAM_SIZE * 2)) < 0)
 		err(1, "reading src");
 
 	d->source = tmp;
+	d->dest = buffer;
+	d->destSize = 1;
 
-	destsize = MIN(length, halfbuf);
-
-	/** Shift upper half of buffer to lower half of buffer, 
-	 *  this is old data that might be needed by decompression */
-	memcpy(&buffer[halfbuf - destsize], &buffer[halfbuf], destsize);
-	// TODO: wrong memcpy
-
-	/* Start filling upper half of buffer with decompressed data */
-	d->dest = &buffer[halfbuf];
-	d->destSize = destsize;
+	do
+	{
+		ret = uzlib_uncompress(d);
+	}
+	while (ret == TINF_OK);
 	
-	ret = uzlib_uncompress(d);
+	if (ret != TINF_DONE)
+		err(1, "Decompression error 1: %i\n", ret);
 	
-	dst_length = d->dest - &buffer[halfbuf];
+	dst_len = d->dest - buffer;
+	src_len = d->source - tmp;
+	printf("src_len=%i, dst_len=%i, len=%i\n", src_len, dst_len, length);
 
-	/* Move bytes of decompressed data to lower half of buffer */
-	//memcpy(&buffer[0], &buffer[halfbuf], halfbuf);
-
-	/* Decompress the rest to out buffer if there is any */
-	// if (declen > 0)
-	// {
-	// 	d->dest = &buffer[halfbuf];
-
-	// 	for (i = 0; i < declen; i++)
-	// 	{
-	// 		/** Decompress one byte at a time and monitor source buffer,
-	// 		 *  the source buffer could be larger than destination buffer
-	// 		 *  if all bytes different */
-	// 		d->destSize = 1;
-	// 		ret |= uzlib_uncompress(d);
-			
-	// 		if ((d->source - tmp) == RAM_SIZE)
-	// 		{
-	// 			rd_length = read(fd, tmp, RAM_SIZE);
-	// 			d->source = tmp;
-	// 		}
-	// 	}
-
-	// 	dst_length += d->dest - &buffer[halfbuf];
-	// }
-
-	if (ret != TINF_OK)
-		err(1, "Decompression error: %i\n", ret);
+	if (dst_len != length)
+		err(1, "Decompression error 2: %i\n", dst_len);
 
 	/* adjust file pointer */
-	int fp = lseek(fd, d->source - tmp - rd_length, SEEK_CUR);
+	int fp = lseek(fd, src_len - rd_length, SEEK_CUR);
 
 	free(tmp);
 
-	return dst_length;
+	return dst_len;
 }
 
 /* Opens and validates compressed data */
@@ -139,7 +112,6 @@ int uzReadOpen(TINF_DATA *d, int fd)
 		return -1;
 
 	d->source = header;
-
 	uzlib_uncompress_init(d, NULL, 0);
 	return uzlib_gzip_parse_header(d);
 }
@@ -160,10 +132,10 @@ int main(int argc, char *argv[])
 	off_t i;
 
 	uint8_t old[RAM_SIZE]; // TODO: malloc
-	uint8_t new[RAM_SIZE];
 	uint8_t ctr[RAM_SIZE];
-	uint8_t wrbuf[RAM_SIZE];
-
+	uint8_t diff[RAM_SIZE];
+	uint8_t extra[RAM_SIZE];
+		
 	uzlib_init();
 
 	if (argc != 4)
@@ -200,6 +172,8 @@ int main(int argc, char *argv[])
 	uzdatalen = offtin(header + 20);
 	newsize = offtin(header + 28);
 
+	printf("ctrlen=%i, datalen=%i, newsize=%i\n", uzctrllen, uzdatalen, newsize);
+
 	if ((uzctrllen < 0) || (uzdatalen < 0) || (newsize < 0))
 		errx(1, "Corrupt patch\n");
 
@@ -233,7 +207,7 @@ int main(int argc, char *argv[])
 			errx(1, "Corrupt patch: 1\n");
 		for (i = 0; i < 3; i++)
 		{
-			ctrl[i] = offtin(&ctr[(i << 3) + (RAM_SIZE >> 1)]);
+			ctrl[i] = offtin(&ctr[i<<3]);
 			printf("ctrl[%i]=%i\n", i, ctrl[i]);
 		}
 
@@ -243,13 +217,14 @@ int main(int argc, char *argv[])
 
 		while (ctrl[0])
 		{
-			max_length = MIN(ctrl[0], RAM_SIZE >> 1);
+			max_length = MIN(ctrl[0], RAM_SIZE);
 
 			/* Read old data */
-			read(fd_old, old, max_length);
+			if (read(fd_old, old, max_length) != max_length)
+				err(1, "read");
 
 			/* Read diff string */
-			lenread = uzRead(&tdata, uzfdata, new, max_length);
+			lenread = uzRead(&tdata, uzfdata, diff, max_length);
 			if (lenread != max_length)
 				errx(1, "Corrupt patch: 3\n");
 
@@ -257,8 +232,7 @@ int main(int argc, char *argv[])
 			for (i = 0; i < max_length; i++)
 				if ((oldpos + i >= 0) && (oldpos + i < oldsize))
 				{
-					wrbuf[i] = new[i + (RAM_SIZE >> 1)] + old[i];
-					printf("%02x ", wrbuf[i]);
+					old[i] += diff[i];
 				}
 
 			/* Adjust pointers */
@@ -269,7 +243,7 @@ int main(int argc, char *argv[])
 			ctrl[0] -= max_length;
 
 			/* Write to new */
-			write(fd_new, wrbuf, max_length);
+			write(fd_new, old, max_length);
 		}
 
 		/* Sanity-check */
@@ -281,7 +255,7 @@ int main(int argc, char *argv[])
 			max_length = MIN(ctrl[1], RAM_SIZE);
 
 			/* Read extra string */
-			lenread = uzRead(&textra, uzfextra, new, max_length);
+			lenread = uzRead(&textra, uzfextra, extra, max_length);
 			if (lenread != max_length)
 				errx(1, "Corrupt patch: 5\n");
 
@@ -292,7 +266,7 @@ int main(int argc, char *argv[])
 			ctrl[1] -= max_length;
 
 			/* Write to new */
-			write(fd_new, &new[RAM_SIZE >> 1], max_length);
+			write(fd_new, extra, max_length);
 		}
 		
 		oldpos += ctrl[2];
