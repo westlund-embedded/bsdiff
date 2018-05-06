@@ -37,7 +37,7 @@
 #include <unistd.h>
 
 #define MIN(x, y) (((x) < (y)) ? (x) : (y))
-#define BLOCK_SIZE 512
+#define BLOCK_SIZE 32
 
 static void split(off_t *I, off_t *V, off_t start, off_t len, off_t h)
 {
@@ -285,7 +285,6 @@ static void uzWriteOpen(FILE *sf, FILE *df)
 	fwrite(&mtime, sizeof(mtime), 1, df);
 	putc(0x04, df); // XFL
 	putc(0x03, df); // OS
-
 	//fseeko(sf, 0, SEEK_SET);
 }
 
@@ -308,14 +307,23 @@ static size_t uzWrite(FILE *sf, FILE *df, uint8_t *buffer, size_t length)
 
 	/* Compress data and write to the destination file */
 	struct Outbuf out = {0};
+		
+	for(int i=0;i<length;i++)
+	{
+		printf("%02x ", buffer[i]);
+	}
+	printf("\n");
+	
 	zlib_start_block(&out);
 	uzlib_compress(&out, buffer, length);
 	zlib_finish_block(&out);
-	fwrite(out.outbuf, 1, out.outlen, df);
+		
+	int wrlen = fwrite(out.outbuf, 1, out.outlen, df);
 
-	printf("inlen=%i, outlen=%i\n", length, out.outlen);
-
-	return out.outlen;
+	printf("wrlen=%i, inlen=%i, outlen=%i\n", wrlen, length, out.outlen);
+	int outlen = out.outlen;
+	
+	return outlen;
 }
 
 int main(int argc, char *argv[])
@@ -334,7 +342,7 @@ int main(int argc, char *argv[])
 	uint8_t *db, *eb;
 	uint8_t header[36], cb[24];
 	FILE *sf, *df;
-
+		
 	if (argc != 4)
 		errx(1, "usage: %s oldfile newfile patchfile\n", argv[0]);
 
@@ -375,11 +383,11 @@ int main(int argc, char *argv[])
 
 	/* Temporary file containing uncompressed data, 
 		used by uzlib for creating crc32 checksum */
-	if ((sf = fopen("crc32", "wb+")) == NULL)
-		err(1, "%s", "crc32");
+	// if ((sf = fopen("crc32", "wb+")) == NULL)
+	// 	err(1, "%s", "crc32");
 
 	/* Create the patch file (destination file) */
-	if ((df = fopen(argv[3], "wb")) == NULL)
+	if ((df = fopen(argv[3], "wb+")) == NULL)
 		err(1, "%s", argv[3]);
 
 	/* Header is
@@ -397,16 +405,19 @@ int main(int argc, char *argv[])
 	offtout(0, header + 12);
 	offtout(0, header + 20);
 	offtout(newsize, header + 28);
+
 	if (fwrite(header, 36, 1, df) != 1)
 		err(1, "fwrite(%s)", argv[3]);
 
 	/* Compute the differences, write ctrl as we go */
 	uzWriteOpen(sf, df);
+
 	scan = 0;
 	len = 0;
 	lastscan = 0;
 	lastpos = 0;
 	lastoffset = 0;
+
 	while (scan < newsize)
 	{
 		oldscore = 0;
@@ -501,7 +512,7 @@ int main(int argc, char *argv[])
 			offtout((scan - lenb) - (lastscan + lenf), &cb[8]);
 			offtout((pos - lenb) - (lastpos + lenf), &cb[16]);
 			uzWrite(sf, df, cb, 24);
-
+			
 			lastscan = scan - lenb;
 			lastpos = pos - lenb;
 			lastoffset = pos - scan;
@@ -518,11 +529,20 @@ int main(int argc, char *argv[])
 	/**Write compressed diff data, write in chunks to 
 	 * keep the RAM usage of bspatch low */
 	int wrptr = 0, wrlen = 0;
+	uint8_t savebyte;
 	uzWriteOpen(sf, df);
 	while (dblen > 0)
 	{
+		if (dblen > BLOCK_SIZE)
+		{
+			savebyte = db[wrptr+BLOCK_SIZE];
+			db[wrptr+BLOCK_SIZE] = ~savebyte;
+		}
 		wrlen = MIN(dblen, BLOCK_SIZE);
 		uzWrite(sf, df, &db[wrptr], wrlen);
+
+		if (dblen > BLOCK_SIZE) db[wrptr+BLOCK_SIZE] = savebyte;
+
 		wrptr += wrlen;		
 		dblen -= wrlen;
 	}
@@ -553,12 +573,12 @@ int main(int argc, char *argv[])
 		err(1, "fwrite(%s)", argv[3]);
 	if (fclose(df))
 		err(1, "fclose");
-	if (fclose(sf))
-		err(1, "fclose");
+	// if (fclose(sf))
+	// 	err(1, "fclose");
 
-	if (remove("crc32"))
-		err(1, "remove");
-
+	// if (remove("crc32"))
+	// 	err(1, "remove");
+	
 	/* Free the memory we used */
 	free(db);
 	free(eb);
