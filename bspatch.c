@@ -35,7 +35,7 @@
 #include "tinf.h"
 
 #define MIN(x, y) (((x) < (y)) ? (x) : (y))
-#define RAM_SIZE 32 // Actual RAM usage is RAM size x 4 (oldfile, newfile, patch)
+#define RAM_SIZE 256 // Actual RAM usage is RAM size x 4 (oldfile, newfile, patch)
 
 static off_t offtin(uint8_t *buf)
 {
@@ -68,13 +68,13 @@ size_t uzRead(TINF_DATA *d, int fd, uint8_t *buffer, int length)
 {
 	int i, ret = TINF_OK, rd_length = 0, dst_len = 0, src_len = 0;
 		
-	uint8_t *tmp = (uint8_t *)malloc(1024);
+	uint8_t *tmp = (uint8_t *)malloc(RAM_SIZE << 1);
 
 	/* Read in more source from file */
-	if ((rd_length = read(fd, tmp, 1024)) < 0)
+	if ((rd_length = read(fd, tmp, RAM_SIZE << 1)) < 0)
 		err(1, "reading src");
 
-	printf("tmp[0]=%x\n", tmp[0]);
+	//printf("tmp[0]=%x\n", tmp[0]);
 
 	uzlib_uncompress_init(d, NULL, 0);	
 	d->source = tmp;
@@ -86,15 +86,12 @@ size_t uzRead(TINF_DATA *d, int fd, uint8_t *buffer, int length)
         ret = uzlib_uncompress(d);
     } while (ret == TINF_OK);
 
-	printf("curlen=%i\n", d->curlen);
-
     if (ret != TINF_DONE) 
         err(1, "Error during decompression 1: %d\n", ret);
 	
 	dst_len = d->dest - buffer;
 	src_len = d->source - tmp;
-	printf("src_len=%i, dst_len=%i, len=%i\n", src_len, dst_len, length);
-
+	
 	if (dst_len != length)
 		err(1, "Decompression error 2: %i\n", dst_len);
 
@@ -175,8 +172,6 @@ int main(int argc, char *argv[])
 	uzdatalen = offtin(header + 20);
 	newsize = offtin(header + 28);
 
-	printf("ctrlen=%i, datalen=%i, newsize=%i\n", uzctrllen, uzdatalen, newsize);
-
 	if ((uzctrllen < 0) || (uzdatalen < 0) || (newsize < 0))
 		errx(1, "Corrupt patch\n");
 
@@ -211,7 +206,6 @@ int main(int argc, char *argv[])
 		for (i = 0; i < 3; i++)
 		{
 			ctrl[i] = offtin(&ctr[i<<3]);
-			printf("ctrl[%i]=%i\n", i, ctrl[i]);
 		}
 
 		/* Sanity-check */

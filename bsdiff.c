@@ -37,7 +37,7 @@
 #include <unistd.h>
 
 #define MIN(x, y) (((x) < (y)) ? (x) : (y))
-#define BLOCK_SIZE 32
+#define BLOCK_SIZE 256
 
 static void split(off_t *I, off_t *V, off_t start, off_t len, off_t h)
 {
@@ -307,28 +307,21 @@ static size_t uzWrite(FILE *sf, FILE *df, uint8_t *buffer, size_t length)
 
 	/* Compress data and write to the destination file */
 	struct Outbuf out = {0};
-		
-	for(int i=0;i<length;i++)
-	{
-		printf("%02x ", buffer[i]);
-	}
-	printf("\n");
-	
+
 	zlib_start_block(&out);
 	uzlib_compress(&out, buffer, length);
 	zlib_finish_block(&out);
-		
+
 	int wrlen = fwrite(out.outbuf, 1, out.outlen, df);
 
-	printf("wrlen=%i, inlen=%i, outlen=%i\n", wrlen, length, out.outlen);
 	int outlen = out.outlen;
-	
+
 	return outlen;
 }
 
 int main(int argc, char *argv[])
 {
-	int fd;
+	int fd, ndb, neb;
 	uint8_t *old, *new;
 	off_t oldsize, newsize;
 	off_t *I, *V;
@@ -338,11 +331,12 @@ int main(int argc, char *argv[])
 	off_t s, Sf, lenf, Sb, lenb;
 	off_t overlap, Ss, lens;
 	off_t i;
-	off_t cblen, dblen, eblen;
+	off_t *dblen = NULL, *eblen = NULL;
+	off_t dbsum, ebsum;
 	uint8_t *db, *eb;
-	uint8_t header[36], cb[24];
+	uint8_t header[36], cb[25];
 	FILE *sf, *df;
-		
+
 	if (argc != 4)
 		errx(1, "usage: %s oldfile newfile patchfile\n", argv[0]);
 
@@ -378,8 +372,8 @@ int main(int argc, char *argv[])
 		((eb = malloc(newsize + 1)) == NULL))
 		err(1, NULL);
 
-	dblen = 0;
-	eblen = 0;
+	dbsum = 0;
+	ebsum = 0;
 
 	/* Temporary file containing uncompressed data, 
 		used by uzlib for creating crc32 checksum */
@@ -417,6 +411,8 @@ int main(int argc, char *argv[])
 	lastscan = 0;
 	lastpos = 0;
 	lastoffset = 0;
+	ndb = 0;
+	neb = 0;
 
 	while (scan < newsize)
 	{
@@ -501,18 +497,24 @@ int main(int argc, char *argv[])
 			};
 
 			for (i = 0; i < lenf; i++)
-				db[dblen + i] = new[lastscan + i] - old[lastpos + i];
+				db[dbsum + i] = new[lastscan + i] - old[lastpos + i];
 			for (i = 0; i < (scan - lenb) - (lastscan + lenf); i++)
-				eb[eblen + i] = new[lastscan + lenf + i];
+				eb[ebsum + i] = new[lastscan + lenf + i];
 
-			dblen += lenf;
-			eblen += (scan - lenb) - (lastscan + lenf);
+			dblen = (off_t*)realloc(dblen, (ndb + 1) * sizeof(off_t));
+			eblen = (off_t*)realloc(eblen, (neb + 1) * sizeof(off_t));
+			dblen[ndb] = lenf;
+			eblen[neb] = (scan - lenb) - (lastscan + lenf);
 
-			offtout(lenf, &cb[0]);
-			offtout((scan - lenb) - (lastscan + lenf), &cb[8]);
+			dbsum += dblen[ndb];
+			ebsum += eblen[neb];
+
+			offtout(dblen[ndb++], &cb[0]);
+			offtout(eblen[neb++], &cb[8]);
 			offtout((pos - lenb) - (lastpos + lenf), &cb[16]);
+			cb[24] = ~cb[23];
 			uzWrite(sf, df, cb, 24);
-			
+
 			lastscan = scan - lenb;
 			lastpos = pos - lenb;
 			lastoffset = pos - scan;
@@ -531,20 +533,20 @@ int main(int argc, char *argv[])
 	int wrptr = 0, wrlen = 0;
 	uint8_t savebyte;
 	uzWriteOpen(sf, df);
-	while (dblen > 0)
+
+	for (i = 0; i < ndb; i++)
 	{
-		if (dblen > BLOCK_SIZE)
+		//printf("dblen[%i]=%i\n", i, dblen[i]);
+		while (dblen[i] > 0)
 		{
-			savebyte = db[wrptr+BLOCK_SIZE];
-			db[wrptr+BLOCK_SIZE] = ~savebyte;
+			wrlen = MIN(dblen[i], BLOCK_SIZE);
+			savebyte = db[wrptr + wrlen];
+			db[wrptr + wrlen] = ~savebyte;
+			uzWrite(sf, df, &db[wrptr], wrlen);
+			db[wrptr + wrlen] = savebyte;
+			wrptr += wrlen;
+			dblen[i] -= wrlen;
 		}
-		wrlen = MIN(dblen, BLOCK_SIZE);
-		uzWrite(sf, df, &db[wrptr], wrlen);
-
-		if (dblen > BLOCK_SIZE) db[wrptr+BLOCK_SIZE] = savebyte;
-
-		wrptr += wrlen;		
-		dblen -= wrlen;
 	}
 	uzWriteClose(sf, df);
 
@@ -557,12 +559,18 @@ int main(int argc, char *argv[])
 	 * keep the RAM usage of bspatch low */
 	uzWriteOpen(sf, df);
 	wrptr = 0, wrlen = 0;
-	while (eblen > 0)
+	for (i = 0; i < neb; i++)
 	{
-		wrlen = MIN(eblen, BLOCK_SIZE);
-		uzWrite(sf, df, &eb[wrptr], wrlen);
-		wrptr += wrlen;		
-		eblen -= wrlen;
+		while (eblen[i] > 0)
+		{
+			wrlen = MIN(eblen[i], BLOCK_SIZE);
+			savebyte = eb[wrptr + wrlen];
+			eb[wrptr + wrlen] = ~savebyte;
+			uzWrite(sf, df, &eb[wrptr], wrlen);
+			eb[wrptr + wrlen] = savebyte;
+			wrptr += wrlen;
+			eblen[i] -= wrlen;
+		}
 	}
 	uzWriteClose(sf, df);
 
@@ -578,10 +586,12 @@ int main(int argc, char *argv[])
 
 	// if (remove("crc32"))
 	// 	err(1, "remove");
-	
+
 	/* Free the memory we used */
 	free(db);
 	free(eb);
+	free(dblen);
+	free(eblen);
 	free(I);
 	free(old);
 	free(new);
