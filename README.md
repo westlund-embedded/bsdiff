@@ -8,4 +8,6 @@ The standard version of bsdiff also uses bzip2 which is slow and consumes alot o
 This version will only be built and tested under Linux. I will port this into NuttX RTOS which is a POSIX operating system much like Linux using smartfs file system and external FLASH. But that port will not be published here.
 
 Note: 
-This version of bspatch is NOT compatible with the standard BSDIFF40 bsdiff
+- This version of bspatch is NOT compatible with the standard BSDIFF40 bsdiff
+- If libtinf.a does not work, checkout uzlib tag v2.1.1 and re-compile
+
