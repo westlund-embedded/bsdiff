@@ -37,7 +37,7 @@
 #include <unistd.h>
 
 #define MIN(x, y) (((x) < (y)) ? (x) : (y))
-#define BLOCK_SIZE 256
+#define BLOCK_SIZE 512
 
 static void split(off_t *I, off_t *V, off_t start, off_t len, off_t h)
 {
@@ -274,49 +274,71 @@ static void offtout(off_t x, uint8_t *buf)
 		buf[7] |= 0x80;
 }
 
-static void uzWriteOpen(FILE *sf, FILE *df)
+static void uzWriteOpen(int sf, int df)
 {
 	/* Write uzlib header */
-	putc(0x1f, df);
-	putc(0x8b, df);
-	putc(0x08, df);
-	putc(0x00, df); // FLG
-	int mtime = 0;
-	fwrite(&mtime, sizeof(mtime), 1, df);
-	putc(0x04, df); // XFL
-	putc(0x03, df); // OS
-	//fseeko(sf, 0, SEEK_SET);
+	uint8_t header[10] = {0x1f, 0x8b, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x04, 0x03};
+	if (write(df, header, 10) != 10)
+		errx(1, "write header\n");
+	else
+		printf("uzLib header written\n");
+
+	//fseek(sf, 0, SEEK_SET);
 }
 
-static void uzWriteClose(FILE *sf, FILE *df)
+static void uzWriteClose(int sf, int df)
 {
 	// TODO: add checksum
-	// int sflen = ftello(sf);
+	// int sflen = ftell(sf);
 	// char *source = (char*)malloc(sflen);
-	// fseeko(sf, 0, SEEK_SET);
+	// fseek(sf, 0, SEEK_SET);
 	// fread(source, 1, sflen, sf);
 	// uint32_t crc = ~uzlib_crc32(source, sflen, ~0);
 	// fwrite(&crc, sizeof(crc), 1, df);
 	// free(source);
 }
 
-static size_t uzWrite(FILE *sf, FILE *df, uint8_t *buffer, size_t length)
+static size_t uzWrite(int sf, int df, uint8_t *buffer, size_t length)
 {
+	int i;
 	/* Store decompressed data for later, needed by crc32 to create ckecksum */
-	//fwrite(buffer, 1, length, sf);
+
+	//_info("inlen=%i\r\n", length);
 
 	/* Compress data and write to the destination file */
-	struct Outbuf out = {0};
+	struct Outbuf out;
+	memset(&out, 0, sizeof(out));
 
 	zlib_start_block(&out);
 	uzlib_compress(&out, buffer, length);
+	out.outbits = 0;
+	//out.outsize = 0;
 	zlib_finish_block(&out);
 
-	int wrlen = fwrite(out.outbuf, 1, out.outlen, df);
+	// if (out.outlen == 81)
+	// {
+	// 	for (i = 0; i < out.outlen; i++)
+	// 		printf("0x%02x,", out.outbuf[i]);
+	// 	printf("\n");
+	// 	errx(1, "Exit\n");
+	// }
 
-	int outlen = out.outlen;
+	if ((i = write(df, out.outbuf, out.outlen)) != out.outlen)
+	{
+		err(1, "write outbuf: fd: %i, inlen: %i, outlen: %i, writelen: %i\n", df, length, out.outlen, i);
+	}
 
-	return outlen;
+	// if (length == BLOCK_SIZE)
+	// {
+	// 	// printf("\n");
+	// 	// for (i = 0; i < length; i++)
+	// 	// {
+	// 	// 	printf("%02x", buffer[i]);
+	// 	// }
+	// 	// printf("\n");
+	// }
+
+	return out.outlen;
 }
 
 int main(int argc, char *argv[])
@@ -335,7 +357,7 @@ int main(int argc, char *argv[])
 	off_t dbsum, ebsum;
 	uint8_t *db, *eb;
 	uint8_t header[36], cb[25];
-	FILE *sf, *df;
+	int sf, df;
 
 	if (argc != 4)
 		errx(1, "usage: %s oldfile newfile patchfile\n", argv[0]);
@@ -381,8 +403,12 @@ int main(int argc, char *argv[])
 	// 	err(1, "%s", "crc32");
 
 	/* Create the patch file (destination file) */
-	if ((df = fopen(argv[3], "wb+")) == NULL)
-		err(1, "%s", argv[3]);
+	if ((df = open(argv[3], O_CREAT | O_RDWR, 0666)) < 0)
+	{
+		errx(1, "open(%s)\n", argv[3]);
+	}
+	else
+		printf("Created patch file: %s\n", argv[3]);
 
 	/* Header is
 		0	12	 "JWE/BSDIFF40"
@@ -400,9 +426,16 @@ int main(int argc, char *argv[])
 	offtout(0, header + 20);
 	offtout(newsize, header + 28);
 
-	if (fwrite(header, 36, 1, df) != 1)
-		err(1, "fwrite(%s)", argv[3]);
+	if (write(df, header, 36) != 36)
+	{
+		errx("write(%s)\n", argv[3]);
+	}
+	else
+	{
+		printf("bsdiff header written\n");
+	}
 
+	printf("Compute the differences and write ctrl as we go\n");
 	/* Compute the differences, write ctrl as we go */
 	uzWriteOpen(sf, df);
 
@@ -501,8 +534,8 @@ int main(int argc, char *argv[])
 			for (i = 0; i < (scan - lenb) - (lastscan + lenf); i++)
 				eb[ebsum + i] = new[lastscan + lenf + i];
 
-			dblen = (off_t*)realloc(dblen, (ndb + 1) * sizeof(off_t));
-			eblen = (off_t*)realloc(eblen, (neb + 1) * sizeof(off_t));
+			dblen = (off_t *)realloc(dblen, (ndb + 1) * sizeof(off_t));
+			eblen = (off_t *)realloc(eblen, (neb + 1) * sizeof(off_t));
 			dblen[ndb] = lenf;
 			eblen[neb] = (scan - lenb) - (lastscan + lenf);
 
@@ -523,12 +556,19 @@ int main(int argc, char *argv[])
 
 	uzWriteClose(sf, df);
 
+	printf("Compute size of compressed ctrl data\n");
+
 	/* Compute size of compressed ctrl data */
-	if ((len = ftello(df)) == -1)
-		err(1, "ftello");
+	/* Compute size of compressed ctrl data */
+	if ((len = lseek(df, 0, SEEK_CUR)) < 0)
+	{
+		errx(1, "lseek\n");
+	}
+
 	offtout(len - 36, header + 12);
 
-	/**Write compressed diff data, write in chunks to 
+	printf("Write compressed diff data\n");
+	/* Write compressed diff data, write in chunks to 
 	 * keep the RAM usage of bspatch low */
 	int wrptr = 0, wrlen = 0;
 	uint8_t savebyte;
@@ -550,12 +590,17 @@ int main(int argc, char *argv[])
 	}
 	uzWriteClose(sf, df);
 
+	printf("Compute size of diff data\n");
+
 	/* Compute size of compressed diff data */
-	if ((newsize = ftello(df)) == -1)
-		err(1, "ftello");
+	if ((newsize = lseek(df, 0, SEEK_CUR)) == -1)
+	{
+		errx(1, "lseek\n");
+	}
 	offtout(newsize - len, header + 20);
 
-	/**Write compressed extra data, write in chunks to 
+	printf("Write compressed extra data\n");
+	/* Write compressed extra data, write in chunks to 
 	 * keep the RAM usage of bspatch low */
 	uzWriteOpen(sf, df);
 	wrptr = 0, wrlen = 0;
@@ -574,18 +619,23 @@ int main(int argc, char *argv[])
 	}
 	uzWriteClose(sf, df);
 
-	/* Seek to the beginning, write the header, and close the file */
-	if (fseeko(df, 0, SEEK_SET))
-		err(1, "fseeko");
-	if (fwrite(header, 36, 1, df) != 1)
-		err(1, "fwrite(%s)", argv[3]);
-	if (fclose(df))
-		err(1, "fclose");
-	// if (fclose(sf))
-	// 	err(1, "fclose");
+	printf("Close file\n");
 
-	// if (remove("crc32"))
-	// 	err(1, "remove");
+	/* Seek to the beginning, write the header, and close the file */
+	if (lseek(df, 0, SEEK_SET))
+	{
+		errx(1, "lseek\n");
+	}
+
+	if (write(df, header, 36) != 36)
+	{
+		errx(1, "write(%s)\n", argv[3]);
+	}
+
+	if (close(df))
+	{
+		errx(1, "close(%s)\n", argv[3]);
+	}
 
 	/* Free the memory we used */
 	free(db);
