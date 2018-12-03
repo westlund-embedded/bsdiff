@@ -311,17 +311,14 @@ static size_t uzWrite(int sf, int df, uint8_t *buffer, size_t length)
 
 	zlib_start_block(&out);
 	uzlib_compress(&out, buffer, length);
-	out.outbits = 0;
-	//out.outsize = 0;
 	zlib_finish_block(&out);
 
-	// if (out.outlen == 81)
-	// {
-	// 	for (i = 0; i < out.outlen; i++)
-	// 		printf("0x%02x,", out.outbuf[i]);
-	// 	printf("\n");
-	// 	errx(1, "Exit\n");
-	// }
+	if (out.outlen == 81)
+	{
+		for (i = 0; i < out.outlen; i++)
+			printf("%02x", out.outbuf[i]);
+		printf("\n");
+	}
 
 	if ((i = write(df, out.outbuf, out.outlen)) != out.outlen)
 	{

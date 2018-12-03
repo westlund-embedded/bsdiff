@@ -68,10 +68,10 @@ size_t uzRead(TINF_DATA *d, int fd, uint8_t *buffer, int length)
 {
 	int i, ret = TINF_OK, rd_length = 0, dst_len = 0, src_len = 0;
 
-	uint8_t *tmp = (uint8_t *)malloc(RAM_SIZE << 1);
+	uint8_t *tmp = (uint8_t *)malloc(RAM_SIZE);
 
 	/* Read in more source from file */
-	if ((rd_length = read(fd, tmp, RAM_SIZE << 1)) < 0)
+	if ((rd_length = read(fd, tmp, RAM_SIZE)) < 0)
 		err(1, "reading src");
 
 	uzlib_uncompress_init(d, NULL, 0);
@@ -93,17 +93,20 @@ size_t uzRead(TINF_DATA *d, int fd, uint8_t *buffer, int length)
 	/* adjust file pointer */
 	int fp = lseek(fd, src_len - rd_length, SEEK_CUR);
 
-	// printf("Compressed length: %i\n", src_len);
-	// for (i = 0; i < src_len; i++)
-	// {
-	// 	printf("%02x", tmp[i]);
-	// }
-	// printf("\n");
+	if (src_len == 81)
+	{
+		printf("Compressed length: %i\n", src_len);
+		for (i = 0; i < src_len; i++)
+		{
+			printf("%02x", tmp[i]);
+		}
+		printf("\n");
+	}
 
-	// if (dst_len != length)
-	// {
-	// 	errx(1, "Length error: %i %i\n", dst_len, length);
-	// }
+	if (dst_len != length)
+	{
+		errx(1, "Length error: %i %i\n", dst_len, length);
+	}
 
 	free(tmp);
 
