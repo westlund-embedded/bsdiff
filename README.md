@@ -9,4 +9,4 @@ This version will only be built and tested under Linux. I will port this into Nu
 
 Note: 
 - This version of bspatch is NOT compatible with the standard BSDIFF40 bsdiff
-- If it does not compile, checkout uzlib tag v2.1.1 and re-compile to get libtinf.a
+- Works with uzlib v2.9 (if it does not compile, get uzlib and re-compile the libtinf.a)

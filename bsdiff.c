@@ -26,15 +26,13 @@
  */
 
 #include <sys/types.h>
-
-#include "tinf.h"
-#include "defl_static.h"
 #include <err.h>
 #include <fcntl.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+#include "uzlib.h"
 
 #define MIN(x, y) (((x) < (y)) ? (x) : (y))
 #define BLOCK_SIZE 512
@@ -280,8 +278,6 @@ static void uzWriteOpen(int sf, int df)
 	uint8_t header[10] = {0x1f, 0x8b, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x04, 0x03};
 	if (write(df, header, 10) != 10)
 		errx(1, "write header\n");
-	else
-		printf("uzLib header written\n");
 
 	//fseek(sf, 0, SEEK_SET);
 }
@@ -301,41 +297,28 @@ static void uzWriteClose(int sf, int df)
 static size_t uzWrite(int sf, int df, uint8_t *buffer, size_t length)
 {
 	int i;
-	/* Store decompressed data for later, needed by crc32 to create ckecksum */
-
-	//_info("inlen=%i\r\n", length);
+	/* TODO: Store decompressed data for later, needed by crc32 to create ckecksum */
 
 	/* Compress data and write to the destination file */
-	struct Outbuf out;
-	memset(&out, 0, sizeof(out));
+    struct uzlib_comp comp = {0};
+    comp.dict_size = 512;
+    comp.hash_bits = 12;
+    size_t hash_size = sizeof(uzlib_hash_entry_t) * (1 << comp.hash_bits);
+    comp.hash_table = malloc(hash_size);
+    memset(comp.hash_table, 0, hash_size);
 
-	zlib_start_block(&out);
-	uzlib_compress(&out, buffer, length);
-	zlib_finish_block(&out);
+    zlib_start_block(&comp.out);
+    uzlib_compress(&comp, buffer, length);
+    zlib_finish_block(&comp.out);
 
-	if (out.outlen == 81)
+	if ((i = write(df, comp.out.outbuf, comp.out.outlen)) != comp.out.outlen)
 	{
-		for (i = 0; i < out.outlen; i++)
-			printf("%02x", out.outbuf[i]);
-		printf("\n");
+		err(1, "write outbuf: fd: %i, inlen: %li, outlen: %i, writelen: %i\n", df, length, comp.out.outlen, i);
 	}
 
-	if ((i = write(df, out.outbuf, out.outlen)) != out.outlen)
-	{
-		err(1, "write outbuf: fd: %i, inlen: %i, outlen: %i, writelen: %i\n", df, length, out.outlen, i);
-	}
+	free(comp.hash_table);
 
-	// if (length == BLOCK_SIZE)
-	// {
-	// 	// printf("\n");
-	// 	// for (i = 0; i < length; i++)
-	// 	// {
-	// 	// 	printf("%02x", buffer[i]);
-	// 	// }
-	// 	// printf("\n");
-	// }
-
-	return out.outlen;
+	return comp.out.outlen;
 }
 
 int main(int argc, char *argv[])
@@ -404,8 +387,6 @@ int main(int argc, char *argv[])
 	{
 		errx(1, "open(%s)\n", argv[3]);
 	}
-	else
-		printf("Created patch file: %s\n", argv[3]);
 
 	/* Header is
 		0	12	 "JWE/BSDIFF40"
@@ -425,14 +406,9 @@ int main(int argc, char *argv[])
 
 	if (write(df, header, 36) != 36)
 	{
-		errx("write(%s)\n", argv[3]);
-	}
-	else
-	{
-		printf("bsdiff header written\n");
+		errx(1, "write(%s)\n", argv[3]);
 	}
 
-	printf("Compute the differences and write ctrl as we go\n");
 	/* Compute the differences, write ctrl as we go */
 	uzWriteOpen(sf, df);
 
@@ -553,8 +529,6 @@ int main(int argc, char *argv[])
 
 	uzWriteClose(sf, df);
 
-	printf("Compute size of compressed ctrl data\n");
-
 	/* Compute size of compressed ctrl data */
 	/* Compute size of compressed ctrl data */
 	if ((len = lseek(df, 0, SEEK_CUR)) < 0)
@@ -564,7 +538,6 @@ int main(int argc, char *argv[])
 
 	offtout(len - 36, header + 12);
 
-	printf("Write compressed diff data\n");
 	/* Write compressed diff data, write in chunks to 
 	 * keep the RAM usage of bspatch low */
 	int wrptr = 0, wrlen = 0;
@@ -587,8 +560,6 @@ int main(int argc, char *argv[])
 	}
 	uzWriteClose(sf, df);
 
-	printf("Compute size of diff data\n");
-
 	/* Compute size of compressed diff data */
 	if ((newsize = lseek(df, 0, SEEK_CUR)) == -1)
 	{
@@ -596,7 +567,6 @@ int main(int argc, char *argv[])
 	}
 	offtout(newsize - len, header + 20);
 
-	printf("Write compressed extra data\n");
 	/* Write compressed extra data, write in chunks to 
 	 * keep the RAM usage of bspatch low */
 	uzWriteOpen(sf, df);
@@ -615,8 +585,6 @@ int main(int argc, char *argv[])
 		}
 	}
 	uzWriteClose(sf, df);
-
-	printf("Close file\n");
 
 	/* Seek to the beginning, write the header, and close the file */
 	if (lseek(df, 0, SEEK_SET))

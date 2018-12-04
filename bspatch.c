@@ -32,7 +32,7 @@
 #include <unistd.h>
 #include <fcntl.h>
 #include <stdint.h>
-#include "tinf.h"
+#include "uzlib.h"
 
 #define MIN(x, y) (((x) < (y)) ? (x) : (y))
 #define RAM_SIZE 512 // Actual RAM usage is RAM size x 4 (oldfile, newfile, patch)
@@ -64,66 +64,66 @@ static off_t offtin(uint8_t *buf)
 }
 
 /* Reads compressed data until decompressed length */
-size_t uzRead(TINF_DATA *d, int fd, uint8_t *buffer, int length)
+size_t uzRead(int fd, uint8_t *buffer, int length)
 {
 	int i, ret = TINF_OK, rd_length = 0, dst_len = 0, src_len = 0;
+	struct uzlib_uncomp d;
 
-	uint8_t *tmp = (uint8_t *)malloc(RAM_SIZE);
-
+	uint8_t *src = (uint8_t *)malloc(RAM_SIZE);
+	
 	/* Read in more source from file */
-	if ((rd_length = read(fd, tmp, RAM_SIZE)) < 0)
+	if ((rd_length = read(fd, src, RAM_SIZE)) < 0)
 		err(1, "reading src");
+		
 
-	uzlib_uncompress_init(d, NULL, 0);
-	d->source = tmp;
-	d->dest = buffer;
-	d->destSize = 1;
+	uzlib_uncompress_init(&d, NULL, 0);
+	d.source = src;
+    d.source_limit = src + RAM_SIZE - 4;
+    d.source_read_cb = NULL;
+	d.dest_start = d.dest = buffer;
+	d.dest_limit = d.dest + 1;
 
 	do
 	{
-		ret = uzlib_uncompress(d);
+		ret = uzlib_uncompress(&d);
 	} while (ret == TINF_OK);
 
 	if (ret != TINF_DONE)
-		err(1, "Error during decompression 1: %d\n", ret);
+		printf("Error during decompression 1: %d\n", ret);
 
-	dst_len = d->dest - buffer;
-	src_len = d->source - tmp;
+	dst_len = d.dest - buffer;
+	src_len = d.source - src;
 
 	/* adjust file pointer */
 	int fp = lseek(fd, src_len - rd_length, SEEK_CUR);
-
-	if (src_len == 81)
-	{
-		printf("Compressed length: %i\n", src_len);
-		for (i = 0; i < src_len; i++)
-		{
-			printf("%02x", tmp[i]);
-		}
-		printf("\n");
-	}
 
 	if (dst_len != length)
 	{
 		errx(1, "Length error: %i %i\n", dst_len, length);
 	}
 
-	free(tmp);
+	free(src);
 
 	return dst_len;
 }
 
 /* Opens and validates compressed data */
-int uzReadOpen(TINF_DATA *d, int fd)
+int uzReadOpen(int fd)
 {
+	struct uzlib_uncomp d;
 	uint8_t header[10];
 
 	/* Read header = 10 because FLG = 0 */
 	if (read(fd, header, 10) != 10)
 		return -1;
 
-	d->source = header;
-	return uzlib_gzip_parse_header(d);
+    uzlib_uncompress_init(&d, NULL, 0);
+
+    d.source = header;
+    d.source_limit = header + 10 - 4;
+    d.source_read_cb = NULL;
+
+	return uzlib_gzip_parse_header(&d);
 }
 
 int main(int argc, char *argv[])
@@ -131,8 +131,7 @@ int main(int argc, char *argv[])
 
 	int fd_old, fd_new, fd_patch;
 	int uzfctrl, uzfdata, uzfextra;
-	TINF_DATA tctrl, tdata, textra;
-
+	
 	ssize_t oldsize, newsize;
 	ssize_t uzctrllen, uzdatalen;
 	uint8_t header[36];
@@ -189,13 +188,13 @@ int main(int argc, char *argv[])
 	if (close(fd_patch))
 		err(1, "close(%s)", argv[3]);
 
-	if (((uzfctrl = open(argv[3], O_RDONLY)) < 0) || (lseek(uzfctrl, 36, SEEK_SET) != 36) || (uzReadOpen(&tctrl, uzfctrl) != TINF_OK))
+	if (((uzfctrl = open(argv[3], O_RDONLY)) < 0) || (lseek(uzfctrl, 36, SEEK_SET) != 36) || (uzReadOpen(uzfctrl) != TINF_OK))
 		err(1, "%s", argv[3]);
 
-	if (((uzfdata = open(argv[3], O_RDONLY)) < 0) || (lseek(uzfdata, 36 + uzctrllen, SEEK_SET) != 36 + uzctrllen) || (uzReadOpen(&tdata, uzfdata) != TINF_OK))
+	if (((uzfdata = open(argv[3], O_RDONLY)) < 0) || (lseek(uzfdata, 36 + uzctrllen, SEEK_SET) != 36 + uzctrllen) || (uzReadOpen(uzfdata) != TINF_OK))
 		err(1, "%s", argv[3]);
 
-	if (((uzfextra = open(argv[3], O_RDONLY)) < 0) || (lseek(uzfextra, 36 + uzctrllen + uzdatalen, SEEK_SET) != 36 + uzctrllen + uzdatalen) || (uzReadOpen(&textra, uzfextra) != TINF_OK))
+	if (((uzfextra = open(argv[3], O_RDONLY)) < 0) || (lseek(uzfextra, 36 + uzctrllen + uzdatalen, SEEK_SET) != 36 + uzctrllen + uzdatalen) || (uzReadOpen(uzfextra) != TINF_OK))
 		err(1, "%s", argv[3]);
 
 	if (((fd_old = open(argv[1], O_RDONLY)) < 0) || ((oldsize = lseek(fd_old, 0, SEEK_END)) == -1) || (lseek(fd_old, 0, SEEK_SET) != 0))
@@ -211,7 +210,7 @@ int main(int argc, char *argv[])
 	while (newpos < newsize)
 	{
 		/* Read control data */
-		if (uzRead(&tctrl, uzfctrl, ctr, 24) != 24)
+		if (uzRead(uzfctrl, ctr, 24) != 24)
 			errx(1, "Corrupt patch: 1\n");
 		for (i = 0; i < 3; i++)
 		{
@@ -231,16 +230,10 @@ int main(int argc, char *argv[])
 				err(1, "read");
 
 			/* Read diff string */
-			lenread = uzRead(&tdata, uzfdata, diff, max_length);
+			lenread = uzRead(uzfdata, diff, max_length);
 			if (lenread != max_length)
 			{
-				// printf("\n");
-				// for (i = 0; i < lenread; i++)
-				// {
-				// 	printf("%02x ", diff[i]);
-				// }
-				// printf("\n");
-				errx(1, "lenread: %i != max_length: %i @ %i\n", lenread, max_length, oldpos);
+				errx(1, "lenread: %li != max_length: %li\n", lenread, max_length);
 			}
 
 			/* Add old data to diff string */
@@ -270,7 +263,7 @@ int main(int argc, char *argv[])
 			max_length = MIN(ctrl[1], RAM_SIZE);
 
 			/* Read extra string */
-			lenread = uzRead(&textra, uzfextra, extra, max_length);
+			lenread = uzRead(uzfextra, extra, max_length);
 			if (lenread != max_length)
 				errx(1, "Corrupt patch: 5\n");
 
