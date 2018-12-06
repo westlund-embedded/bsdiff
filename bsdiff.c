@@ -301,7 +301,7 @@ static size_t uzWrite(int sf, int df, uint8_t *buffer, size_t length)
 
 	/* Compress data and write to the destination file */
     struct uzlib_comp comp = {0};
-    comp.dict_size = 512;
+    comp.dict_size = BLOCK_SIZE;
     comp.hash_bits = 12;
     size_t hash_size = sizeof(uzlib_hash_entry_t) * (1 << comp.hash_bits);
     comp.hash_table = malloc(hash_size);
